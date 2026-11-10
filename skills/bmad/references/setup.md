@@ -25,6 +25,8 @@ Run with `--status`; it writes nothing. On a first install (`bmad_exists` false)
 - `unknown-version`: the installed copy predates module records; `npx skills update` fixes it.
 - `custom_gitignore` `unprotected`: personal answers may be committed. Only the user edits that `.gitignore`.
 - `newer_copy_unused`: the duplicate in use is older than another copy.
+- `models.drift`: installed skills whose `model` or `effort` no longer match the `[models]` settings, usually after an update; setup writes them back.
+- `models.not_applied`: settings for a global or plugin-managed copy, which setup never writes.
 
 Then list what can be done and ask which to do, unless the request already said. End with `next` when it is not null.
 
@@ -44,7 +46,7 @@ Modules carry install messages from their authors: `pre_install_message` and `po
 "nested.key" = "selected answer"
 ```
 
-Then run with no mode flag, adding `--module-answers <file>` when you wrote one, and delete that file after. It refreshes `_bmad/scripts` and each module's scripts, adds the answers, and moves `_bmad/custom/` files of renamed skills (`custom_renames`); it never changes an existing value. Report what changed, `custom_not_renamed` (both files exist: the user merges them) and `custom_unused` (customizations of removed skills). Then show the `post_install_message` of each module whose `scripts` is `created` or whose `version` differs from the kept one, including modules added since; show each message once.
+Then run with no mode flag, adding `--module-answers <file>` when you wrote one, and delete that file after. It refreshes `_bmad/scripts` and each module's scripts, adds the answers, moves `_bmad/custom/` files of renamed skills (`custom_renames`), and writes each skill's `model` and `effort` from `[models]` into its installed `SKILL.md` (`models.applied`); it never changes an existing answer. Report what changed, `custom_not_renamed` (both files exist: the user merges them) and `custom_unused` (customizations of removed skills). Then show the `post_install_message` of each module whose `scripts` is `created` or whose `version` differs from the kept one, including modules added since; show each message once.
 
 **Remove and install.** When a path is `global`, say that deleting it affects every project on this machine.
 

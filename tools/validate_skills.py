@@ -5,7 +5,7 @@
 # ///
 """Deterministic Skill Validator
 
-Validates 12 deterministic rules across skill directories.
+Validates 13 deterministic rules across skill directories.
 Acts as a fast first-pass complement to the inference-based skill validator.
 
 What it checks:
@@ -17,6 +17,7 @@ What it checks:
 - SKILL-06: description quality (length, "Use when"/"Use if"; the fixed text for a module record)
 - SKILL-07: SKILL.md has body content after frontmatter
 - SKILL-08: SKILL.md frontmatter parses as a YAML mapping with string name and description
+- SKILL-09: SKILL.md frontmatter carries no model or effort; `bmad setup` owns them on installed copies
 - PATH-02: no installed_path variable
 - PATH-06: script calls use {skill-root}, not a bare scripts/ path
 - SEQ-02: no time estimates
@@ -113,6 +114,9 @@ def _finding(
 
 
 # --- Frontmatter Parsing ---
+
+# Installed copies get these from `bmad setup`, which removes any it has no setting for.
+MODEL_KEYS = frozenset({"model", "effort"})
 
 
 def _frontmatter_block(content: str) -> str | None:
@@ -357,6 +361,18 @@ def validate_skill(skill_dir: str) -> list[dict]:
                 detail,
                 "Fix the frontmatter so a YAML parser reads it: in a single-quoted value, write an apostrophe as `''`.",
                 line,
+            )
+        )
+
+    for key in sorted(MODEL_KEYS & set(skill_fm or {})):
+        findings.append(
+            _finding(
+                "SKILL-09",
+                "SKILL.md Frontmatter Must Not Set model or effort",
+                "HIGH",
+                "SKILL.md",
+                f"Frontmatter sets `{key}`; `bmad setup` writes it from the project's `[models]` config instead.",
+                f"Remove `{key}` from the frontmatter and document the recommended value in the module's models.toml.",
             )
         )
 
