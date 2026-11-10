@@ -25,7 +25,7 @@ KEYS = ("model", "effort")
 CONFIG_LAYERS = ("_bmad/config.toml", "_bmad/custom/config.toml", "_bmad/custom/config.user.toml")
 MODEL_ALIASES = frozenset({"best", "fable", "opus", "sonnet", "haiku", "opus[1m]", "sonnet[1m]", "opusplan", "inherit"})
 # A full id, optionally behind a provider prefix such as `us.anthropic.`, with a Bedrock `-v1:0` or Vertex `@date` tail.
-FULL_MODEL_ID = re.compile(r"(?:[a-z0-9-]+\.)*claude-[a-z0-9][a-z0-9.:@-]*(?:\[1m\])?\Z")
+FULL_MODEL_ID = re.compile(r"(?:[a-z0-9-]+\.)*claude-[a-z0-9](?:[a-z0-9.:@-]*[a-z0-9])?(?:\[1m\])?\Z")
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 TOP_LEVEL_KEY = re.compile(r"([A-Za-z0-9_-]+):")
 NEEDS_QUOTES = re.compile(r"[\[\]:#@]")
@@ -265,12 +265,10 @@ def problem(relative: str, key: str, message: str) -> dict[str, object]:
 def frontmatter_bounds(lines: list[str]) -> tuple[int, int] | None:
     """The indexes of the opening and closing `---`, or None when the text does not open with a frontmatter block.
 
-    A byte-order mark and blank lines may come first, as YAML loaders allow.
+    A byte-order mark may come before the opening `---`; anything else there means no frontmatter.
     """
     start = 0
-    while start < len(lines) and not lines[start].lstrip("\ufeff").strip():
-        start += 1
-    if start == len(lines) or lines[start].lstrip("\ufeff").rstrip("\r\n") != "---":
+    if not lines or lines[start].lstrip("\ufeff").rstrip("\r\n") != "---":
         return None
     for index in range(start + 1, len(lines)):
         if lines[index].rstrip("\r\n") == "---":
@@ -333,12 +331,16 @@ def rewrite(text: str, changes: dict[str, str | None]) -> str:
     inner = lines[start + 1 : end]
     newline = "\r\n" if lines[start].endswith("\r\n") else "\n"
     pending = dict(changes)
+    done: set[str] = set()
     kept: list[str] = []
     for line in inner:
         match = TOP_LEVEL_KEY.match(line)
         key = match.group(1) if match else None
+        if key in done:
+            continue
         if key in pending:
             value = pending.pop(key)
+            done.add(key)
             if value is not None:
                 kept.append(f"{key}: {quote(value)}{newline}")
             continue
@@ -367,13 +369,25 @@ def unquote(value: str) -> str:
     return value
 
 
-def read_record(path: Path) -> dict[str, dict[str, dict[str, str | None]]]:
-    """Setup's record of what it wrote, per skill and key; empty when absent or unreadable."""
+def read_record(path: Path) -> dict[str, dict[str, dict[str, str | None]]] | None:
+    """Setup's record of what it wrote, per skill and key: empty when absent, None when it cannot be used."""
+    if not path.exists():
+        return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
+        return None
+    if not isinstance(data, dict):
+        return None
+    for keys in data.values():
+        if not isinstance(keys, dict):
+            return None
+        for key, entry in keys.items():
+            if key not in KEYS or not isinstance(entry, dict) or set(entry) != {"wrote", "shipped"}:
+                return None
+            if not isinstance(entry["wrote"], str) or not isinstance(entry["shipped"], (str, type(None))):
+                return None
+    return data
 
 
 def write_record(path: Path, record: dict[str, dict[str, dict[str, str | None]]]) -> None:

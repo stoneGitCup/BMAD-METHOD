@@ -4227,6 +4227,36 @@ class BmadModelSettingsTests(unittest.TestCase):
         )
         self.assertEqual(gamma.joinpath("SKILL.md").read_bytes(), shipped)
 
+    def test_an_unusable_record_is_a_problem_and_nothing_is_written(self):
+        self.setup()
+        write(self.project / "_bmad" / "custom" / "config.toml", '[models.skills.alpha-skill]\nmodel = "opus"\n')
+        write(self.project / "_bmad" / "models-applied.json", "{broken")
+        report = self.setup()
+        self.assertEqual([item["file"] for item in report["problems"]], ["_bmad/models-applied.json"])
+        self.assertEqual(self.skill_md.read_text(encoding="utf-8"), self.SKILL_TEXT)
+        self.assertEqual((self.project / "_bmad" / "models-applied.json").read_text(encoding="utf-8"), "{broken")
+
+    def test_the_record_forgets_skills_no_longer_installed(self):
+        self.setup()
+        record = self.project / "_bmad" / "models-applied.json"
+        write(record, '{"gone-skill": {"model": {"wrote": "opus", "shipped": null}}}')
+        self.setup()
+        self.assertFalse(record.exists())
+
+    @unittest.skipUnless(symlink_to_temp_dir_succeeds(), "symlinks unavailable")
+    def test_a_skill_file_linked_to_a_global_file_is_not_written(self):
+        outside = self.project.parent / "home" / "alpha-SKILL.md"
+        write(outside, self.SKILL_TEXT)
+        self.skill_md.unlink()
+        os.symlink(outside, self.skill_md)
+        self.setup()
+        write(self.project / "_bmad" / "custom" / "config.toml", '[models.skills.alpha-skill]\nmodel = "opus"\n')
+        report = self.setup()
+        self.assertEqual(
+            report["models"]["not_applied"], [{"skill": "alpha-skill", "reason": "global", "model": "opus"}]
+        )
+        self.assertEqual(outside.read_text(encoding="utf-8"), self.SKILL_TEXT)
+
 
 if __name__ == "__main__":
     unittest.main()

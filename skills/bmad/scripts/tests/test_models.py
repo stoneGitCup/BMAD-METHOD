@@ -88,7 +88,7 @@ class ResolveTests(unittest.TestCase):
             "claude-sonnet-4-5@20250929",
         ):
             self.assertIsNone(models.invalid_value("model", value), value)
-        for value in ("gpt-5", "default", "Opus", "claude-"):
+        for value in ("gpt-5", "default", "Opus", "claude-", "claude-opus-", "claude-sonnet@", "anthropic.claude-x:"):
             self.assertIsNotNone(models.invalid_value("model", value), value)
 
 
@@ -244,6 +244,18 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual(models.reconcile({"model": "sonnet"}, {}, record)[:2], ({}, {}))
 
 
+class RecordTests(unittest.TestCase):
+    def test_absent_is_empty_and_a_malformed_record_is_unusable(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "models-applied.json"
+            self.assertEqual(models.read_record(path), {})
+            for content in ("{", '{"demo": "x"}', '{"demo": {"model": {"wrote": "opus"}}}', '{"demo": {"tone": {}}}'):
+                path.write_text(content, encoding="utf-8")
+                self.assertIsNone(models.read_record(path), content)
+            path.write_text('{"demo": {"model": {"wrote": "opus", "shipped": null}}}', encoding="utf-8")
+            self.assertEqual(models.read_record(path), {"demo": {"model": {"wrote": "opus", "shipped": None}}})
+
+
 class RewriteTests(unittest.TestCase):
     def test_keys_go_after_the_description_and_nothing_else_changes(self):
         updated = models.rewrite(SKILL, {"model": "opus", "effort": "high"})
@@ -278,10 +290,16 @@ class RewriteTests(unittest.TestCase):
         shipped = SKILL.replace("license: MIT\n", "license: MIT\nmodel: haiku\n")
         self.assertEqual(models.rewrite(shipped, {"model": "opus"}), shipped.replace("model: haiku", "model: opus"))
 
-    def test_a_byte_order_mark_and_leading_blank_lines_are_allowed(self):
-        text = "\ufeff\n" + SKILL
-        updated = models.rewrite(text, {"model": "opus"})
-        self.assertTrue(updated.startswith("\ufeff\n---\n"))
+    def test_a_byte_order_mark_is_allowed_but_not_leading_blank_lines(self):
+        updated = models.rewrite("\ufeff" + SKILL, {"model": "opus"})
+        self.assertTrue(updated.startswith("\ufeff---\n"))
+        self.assertEqual(models.current(updated), {"model": "opus"})
+        self.assertIsNone(models.frontmatter_bounds(("\n" + SKILL).splitlines(keepends=True)))
+
+    def test_a_duplicated_key_is_collapsed_to_the_new_line(self):
+        doubled = SKILL.replace("license: MIT\n", "model: haiku\nlicense: MIT\nmodel: sonnet\n")
+        updated = models.rewrite(doubled, {"model": "opus"})
+        self.assertEqual(updated.count("model:"), 1)
         self.assertEqual(models.current(updated), {"model": "opus"})
 
     def test_text_without_frontmatter_is_left_alone(self):

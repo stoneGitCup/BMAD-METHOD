@@ -413,6 +413,9 @@ def models_pass(
         return report, resolution.problems, False
     record_path = project_root / models.RECORD
     record = models.read_record(record_path)
+    if record is None:
+        message = "cannot be read; setup will not change any skill's model or effort until it is fixed or deleted"
+        return report, [*resolution.problems, models.problem(models.RECORD, "", message)], False
     changed = False
     for installed in installation.modules:
         plugin = installed.parsed.update_source.startswith("plugin:")
@@ -421,12 +424,12 @@ def models_pass(
             if folder is None or name in resolution.invalid or not (folder / "SKILL.md").is_file():
                 continue
             wanted = resolution.skills.get(name, {})
-            if plugin or is_global(folder.resolve(), project_root):
+            target = (folder / "SKILL.md").resolve()
+            if plugin or is_global(target, project_root):
                 if wanted:
                     reason = "plugin-managed" if plugin else "global"
                     report["not_applied"].append({"skill": name, "reason": reason, **wanted})
                 continue
-            target = (folder / "SKILL.md").resolve()
             text = target.read_bytes().decode("utf-8")
             if models.frontmatter_bounds(text.splitlines(keepends=True)) is None:
                 if wanted:
@@ -439,21 +442,26 @@ def models_pass(
                 report["not_applied"].append({"skill": name, "reason": "edited", **kept})
             if write:
                 updated = models.rewrite(text, changes)
-                if updated != text:
-                    target.write_bytes(updated.encode("utf-8"))
-                    changed = True
                 if after:
                     record[name] = after
                 else:
                     record.pop(name, None)
+                if updated != text:
+                    # Recorded before the skill changes, so a failure later in the pass never orphans a write.
+                    models.write_record(record_path, record)
+                    target.write_bytes(updated.encode("utf-8"))
+                    changed = True
             elif changes:
                 report["drift"].append({"skill": name, "wanted": wanted, "found": found})
                 continue
             applied = {key: value for key, value in wanted.items() if key not in edited}
             if applied:
                 report["applied"].append({"skill": name, **applied})
-    if write and record != models.read_record(record_path):
-        models.write_record(record_path, record)
+    if write:
+        for name in [name for name in record if name not in installation.folders]:
+            del record[name]
+        if record != models.read_record(record_path):
+            models.write_record(record_path, record)
     return report, resolution.problems, changed
 
 
