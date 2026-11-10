@@ -4041,7 +4041,7 @@ class BmadModelSettingsTests(unittest.TestCase):
     def test_no_setting_leaves_every_skill_byte_identical(self):
         before = {path: path.read_bytes() for path in self.skills.rglob("SKILL.md")}
         report = self.setup()
-        self.assertEqual(report["models"], {"applied": []})
+        self.assertEqual(report["models"], {"applied": [], "drift": [], "not_applied": []})
         self.assertEqual({path: path.read_bytes() for path in self.skills.rglob("SKILL.md")}, before)
 
     def test_a_setting_for_a_skill_not_installed_writes_nothing(self):
@@ -4049,7 +4049,7 @@ class BmadModelSettingsTests(unittest.TestCase):
         write(self.project / "_bmad" / "custom" / "config.toml", '[models.skills.ghost-skill]\nmodel = "opus"\n')
         before = {path: path.read_bytes() for path in self.skills.rglob("SKILL.md")}
         report = self.setup()
-        self.assertEqual(report["models"], {"applied": []})
+        self.assertEqual(report["models"], {"applied": [], "drift": [], "not_applied": []})
         self.assertFalse(report["changed"])
         self.assertEqual({path: path.read_bytes() for path in self.skills.rglob("SKILL.md")}, before)
 
@@ -4085,3 +4085,63 @@ class BmadModelSettingsTests(unittest.TestCase):
         setup_report(self, self.project, self.skill, *roots)
         self.assertTrue((linked / "alpha-skill").is_symlink())
         self.assertIn("model: opus\n", self.skill_md.read_text(encoding="utf-8"))
+
+    def test_status_reports_drift_after_an_update_and_setup_restores_it(self):
+        self.setup()
+        write(self.project / "_bmad" / "custom" / "config.toml", '[models.skills.alpha-skill]\nmodel = "opus"\n')
+        self.setup()
+        status = status_report(self, self.project, self.skill, "--root", str(self.skills))
+        self.assertEqual(status["models"]["applied"], [{"skill": "alpha-skill", "model": "opus"}])
+        self.assertEqual(status["models"]["drift"], [])
+        self.assertTrue(status["current"])
+
+        write(self.skill_md, self.SKILL_TEXT)
+        before = snapshot(self.project)
+        status = status_report(self, self.project, self.skill, "--root", str(self.skills))
+        self.assertEqual(snapshot(self.project), before)
+        self.assertEqual(
+            status["models"]["drift"], [{"skill": "alpha-skill", "wanted": {"model": "opus"}, "found": {}}]
+        )
+        self.assertFalse(status["current"])
+        self.assertEqual(status["next"], "bmad setup")
+
+        self.setup()
+        status = status_report(self, self.project, self.skill, "--root", str(self.skills))
+        self.assertEqual(status["models"]["drift"], [])
+        self.assertTrue(status["current"])
+
+    def test_status_names_the_file_and_key_of_a_bad_value(self):
+        self.setup()
+        write(self.project / "_bmad" / "custom" / "config.user.toml", '[models.skills.alpha-skill]\nmodel = "gpt"\n')
+        status = status_report(self, self.project, self.skill, "--root", str(self.skills))
+        self.assertEqual(
+            [(item["file"], item["key"]) for item in status["problems"]],
+            [("_bmad/custom/config.user.toml", "models.skills.alpha-skill.model")],
+        )
+
+    def test_a_plugin_managed_module_is_reported_not_written(self):
+        plugin = write_module_skill(self.skills, "beta-skill", "beta", update_source="plugin:beta-plugin")
+        shipped = plugin.joinpath("SKILL.md").read_bytes()
+        self.setup()
+        write(self.project / "_bmad" / "custom" / "config.toml", '[models.skills.beta-skill]\neffort = "low"\n')
+        report = self.setup()
+        self.assertEqual(
+            report["models"]["not_applied"], [{"skill": "beta-skill", "reason": "plugin-managed", "effort": "low"}]
+        )
+        self.assertEqual(plugin.joinpath("SKILL.md").read_bytes(), shipped)
+        status = status_report(self, self.project, self.skill, "--root", str(self.skills))
+        self.assertEqual(status["models"]["not_applied"], report["models"]["not_applied"])
+        self.assertEqual(status["models"]["drift"], [])
+
+    def test_a_global_copy_is_reported_not_written(self):
+        global_skills = self.project.parent / "home" / ".claude" / "skills"
+        gamma = write_module_skill(global_skills, "gamma-skill", "gamma")
+        shipped = gamma.joinpath("SKILL.md").read_bytes()
+        roots = ("--root", str(self.skills), "--root", str(global_skills))
+        setup_report(self, self.project, self.skill, *roots)
+        write(self.project / "_bmad" / "custom" / "config.toml", '[models.skills.gamma-skill]\nmodel = "haiku"\n')
+        report = setup_report(self, self.project, self.skill, *roots)
+        self.assertEqual(
+            report["models"]["not_applied"], [{"skill": "gamma-skill", "reason": "global", "model": "haiku"}]
+        )
+        self.assertEqual(gamma.joinpath("SKILL.md").read_bytes(), shipped)

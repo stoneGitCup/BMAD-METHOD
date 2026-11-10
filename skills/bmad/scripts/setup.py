@@ -340,7 +340,7 @@ def setup(
     if not output.exists() and not output.is_symlink():
         changed = True
     ensure_dir(output)
-    models_report, models_problems, models_changed = apply_models(project_root, installation)
+    models_report, models_problems, models_changed = models_pass(project_root, installation, write=True)
     changed = changed or models_changed
 
     unmet = unmet_requirements(installation, skill_root, module=None if selected is None else selected.module)
@@ -388,33 +388,45 @@ def setup(
     }
 
 
-def apply_models(
-    project_root: Path, installation: Installation
+def models_pass(
+    project_root: Path, installation: Installation, *, write: bool
 ) -> tuple[dict[str, object], list[dict[str, object]], bool]:
-    """Write each project-scope BMad skill's resolved model and effort into its installed SKILL.md.
+    """Compare each BMad skill's resolved model and effort with its installed SKILL.md, writing when asked.
 
-    Every module is covered, whatever `--module` narrows, because the settings name skills, not modules.
+    Only project-scope copies of modules that are not plugin-managed are written; a setting aimed at any
+    other copy is reported as not applied. Every module is covered, whatever `--module` narrows, because
+    the settings name skills, not modules.
     """
     import models
 
     resolution = models.resolve(project_root)
     applied: list[dict[str, str]] = []
+    drift: list[dict[str, object]] = []
+    not_applied: list[dict[str, str]] = []
     changed = False
     for installed in installation.modules:
-        if installed.parsed.update_source.startswith("plugin:"):
-            continue
+        plugin = installed.parsed.update_source.startswith("plugin:")
         for name in installed.skills:
             folder = installation.folders.get(name)
-            if folder is None or name in resolution.invalid or is_global(folder, project_root):
-                continue
-            skill_md = folder / "SKILL.md"
-            if not skill_md.is_file():
+            if folder is None or name in resolution.invalid or not (folder / "SKILL.md").is_file():
                 continue
             wanted = resolution.skills.get(name, {})
-            changed = models.apply(skill_md, wanted) or changed
+            if plugin or is_global(folder, project_root):
+                if wanted:
+                    not_applied.append({"skill": name, "reason": "plugin-managed" if plugin else "global", **wanted})
+                continue
+            skill_md = folder / "SKILL.md"
+            if write:
+                changed = models.apply(skill_md, wanted) or changed
+            else:
+                found = models.current(skill_md.read_bytes().decode("utf-8"))
+                if found != wanted:
+                    drift.append({"skill": name, "wanted": wanted, "found": found})
+                    continue
             if wanted:
                 applied.append({"skill": name, **wanted})
-    return {"applied": applied}, resolution.problems, changed
+    report = {"applied": applied, "drift": drift, "not_applied": not_applied}
+    return report, resolution.problems, changed
 
 
 def payload(skill_root: Path) -> tuple[Path, Path]:
@@ -1785,6 +1797,8 @@ def status_report(
     gitignore_state = custom_gitignore_state(project_root)
     problems.extend(custom_gitignore_problems(gitignore_state))
     retirement = retirement_report(project_root, skill_root, installation, retired_skills(scoped, installation.modules))
+    models_report, models_problems, _ = models_pass(project_root, installation, write=False)
+    problems.extend(models_problems)
     setup_owed = (
         not bmad.is_dir()
         or shared_state != "current"
@@ -1796,6 +1810,7 @@ def status_report(
         or render_gitignore_missing(project_root)
         or any(item["scripts"] in ("missing", "stale") for item in modules)
         or bool(retirement.renames)
+        or bool(models_report["drift"])
     )
     next_command = next_step(
         installation.missing_records,
@@ -1820,6 +1835,7 @@ def status_report(
         "unmet_recommendations": unmet_recommendations(installation, skill_root, module=code),
         "problems": problems,
         **retirement_json(retirement),
+        "models": models_report,
         "current": (
             next_command is None
             and not unmet
