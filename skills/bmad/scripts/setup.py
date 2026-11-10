@@ -340,12 +340,14 @@ def setup(
     if not output.exists() and not output.is_symlink():
         changed = True
     ensure_dir(output)
+    models_report, models_problems, models_changed = apply_models(project_root, installation)
+    changed = changed or models_changed
 
     unmet = unmet_requirements(installation, skill_root, module=None if selected is None else selected.module)
     recommended = unmet_recommendations(installation, skill_root, module=None if selected is None else selected.module)
     remaining = find_pending_questions(installation.modules, merged, user_merged, project_root)
     next_command = next_step(installation.missing_records, unmet, setup_owed=bool(remaining))
-    problems = [*installation.problems, *custom_gitignore_problems(gitignore_state)]
+    problems = [*installation.problems, *custom_gitignore_problems(gitignore_state), *models_problems]
     return {
         "mode": "setup",
         "status": "created" if created else "repaired" if changed else "current",
@@ -380,9 +382,39 @@ def setup(
         "duplicate_skills": duplicates_json(installation.duplicates, project_root),
         "problems": problems,
         **retirement_json(retirement),
+        "models": models_report,
         "current": (next_command is None and not unmet and not problems and not installation.missing_records),
         "next": next_command,
     }
+
+
+def apply_models(
+    project_root: Path, installation: Installation
+) -> tuple[dict[str, object], list[dict[str, object]], bool]:
+    """Write each project-scope BMad skill's resolved model and effort into its installed SKILL.md.
+
+    Every module is covered, whatever `--module` narrows, because the settings name skills, not modules.
+    """
+    import models
+
+    resolution = models.resolve(project_root)
+    applied: list[dict[str, str]] = []
+    changed = False
+    for installed in installation.modules:
+        if installed.parsed.update_source.startswith("plugin:"):
+            continue
+        for name in installed.skills:
+            folder = installation.folders.get(name)
+            if folder is None or name in resolution.invalid or is_global(folder, project_root):
+                continue
+            skill_md = folder / "SKILL.md"
+            if not skill_md.is_file():
+                continue
+            wanted = resolution.skills.get(name, {})
+            changed = models.apply(skill_md, wanted) or changed
+            if wanted:
+                applied.append({"skill": name, **wanted})
+    return {"applied": applied}, resolution.problems, changed
 
 
 def payload(skill_root: Path) -> tuple[Path, Path]:

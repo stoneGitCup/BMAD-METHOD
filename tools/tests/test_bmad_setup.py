@@ -19,6 +19,7 @@ BMAD_SOURCE = "github:bmad-code-org/BMAD-METHOD/skills"
 SHARED_SCRIPTS = (
     "config_utils.py",
     "memlog.py",
+    "models.py",
     "render_skill.py",
     "resolve_config.py",
     "resolve_customization.py",
@@ -3999,3 +4000,88 @@ class BmadKnowledgeEntryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BmadModelSettingsTests(unittest.TestCase):
+    """`[models.skills]` in the config layers lands in the installed SKILL.md of project-scope skills."""
+
+    SKILL_TEXT = "---\nname: alpha-skill\ndescription: Alpha.\n---\n\n# Alpha\n"
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        root = Path(temp.name).resolve()
+        self.project = root / "project"
+        self.skills = self.project / ".agents" / "skills"
+        self.skill = write_dest_bmad(self.skills)
+        write_core(self.skills)
+        alpha = write_module_skill(self.skills, "alpha-skill", "alpha")
+        write(alpha / "SKILL.md", self.SKILL_TEXT)
+        self.skill_md = alpha / "SKILL.md"
+
+    def setup(self) -> dict:
+        return setup_report(self, self.project, self.skill, "--root", str(self.skills))
+
+    def test_the_personal_setting_beats_the_team_setting_in_the_installed_frontmatter(self):
+        self.setup()
+        custom = self.project / "_bmad" / "custom"
+        write(custom / "config.toml", '[models.skills.alpha-skill]\nmodel = "opus"\neffort = "high"\n')
+        write(custom / "config.user.toml", '[models.skills.alpha-skill]\nmodel = "sonnet"\n')
+
+        report = self.setup()
+        self.assertEqual(report["models"]["applied"], [{"skill": "alpha-skill", "model": "sonnet", "effort": "high"}])
+        self.assertEqual(
+            self.skill_md.read_text(encoding="utf-8"),
+            "---\nname: alpha-skill\ndescription: Alpha.\nmodel: sonnet\neffort: high\n---\n\n# Alpha\n",
+        )
+        self.assertTrue(report["changed"])
+        again = self.setup()
+        self.assertFalse(again["changed"])
+
+    def test_no_setting_leaves_every_skill_byte_identical(self):
+        before = {path: path.read_bytes() for path in self.skills.rglob("SKILL.md")}
+        report = self.setup()
+        self.assertEqual(report["models"], {"applied": []})
+        self.assertEqual({path: path.read_bytes() for path in self.skills.rglob("SKILL.md")}, before)
+
+    def test_a_setting_for_a_skill_not_installed_writes_nothing(self):
+        self.setup()
+        write(self.project / "_bmad" / "custom" / "config.toml", '[models.skills.ghost-skill]\nmodel = "opus"\n')
+        before = {path: path.read_bytes() for path in self.skills.rglob("SKILL.md")}
+        report = self.setup()
+        self.assertEqual(report["models"], {"applied": []})
+        self.assertFalse(report["changed"])
+        self.assertEqual({path: path.read_bytes() for path in self.skills.rglob("SKILL.md")}, before)
+
+    def test_removing_the_setting_restores_the_shipped_frontmatter(self):
+        self.setup()
+        team = self.project / "_bmad" / "custom" / "config.toml"
+        write(team, '[models.skills.alpha-skill]\nmodel = "fable"\n')
+        self.setup()
+        self.assertIn("model: fable\n", self.skill_md.read_text(encoding="utf-8"))
+        team.unlink()
+        self.setup()
+        self.assertEqual(self.skill_md.read_text(encoding="utf-8"), self.SKILL_TEXT)
+
+    def test_a_bad_value_is_a_problem_and_the_skill_is_not_written(self):
+        self.setup()
+        write(self.project / "_bmad" / "custom" / "config.toml", '[models.skills.alpha-skill]\neffort = "huge"\n')
+        report = self.setup()
+        self.assertEqual(
+            [(item["kind"], item["file"], item["key"]) for item in report["problems"]],
+            [("models", "_bmad/custom/config.toml", "models.skills.alpha-skill.effort")],
+        )
+        self.assertFalse(report["current"])
+        self.assertEqual(self.skill_md.read_text(encoding="utf-8"), self.SKILL_TEXT)
+
+    @unittest.skipUnless(symlink_to_temp_dir_succeeds(), "symlinks unavailable")
+    def test_a_linked_skill_folder_stays_a_link(self):
+        linked = self.project / ".claude" / "skills"
+        linked.mkdir(parents=True)
+        os.symlink(self.skills / "alpha-skill", linked / "alpha-skill", target_is_directory=True)
+        roots = ("--root", str(linked), "--root", str(self.skills))
+        setup_report(self, self.project, self.skill, *roots)
+        write(self.project / "_bmad" / "custom" / "config.toml", '[models.skills.alpha-skill]\nmodel = "opus"\n')
+        setup_report(self, self.project, self.skill, *roots)
+        self.assertTrue((linked / "alpha-skill").is_symlink())
+        self.assertIn("model: opus\n", self.skill_md.read_text(encoding="utf-8"))
