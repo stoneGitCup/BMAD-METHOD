@@ -51,16 +51,19 @@ class Resolution:
 
 
 def resolve(project_root: Path, modules: tuple[Module, ...] = ()) -> Resolution:
-    """Each skill's model and effort: its own setting, else its phase's default, per key.
+    """Each skill's model and effort: its own setting, else its phase's default, else the active preset, per key.
 
     Each setting is taken after the team and personal layers, from the last layer that sets it. A skill's
-    phase comes from the `models.toml` of the module listing it.
+    phase and preset values come from the `models.toml` of the module listing it.
     """
     resolution = Resolution()
-    phase_of = module_phases(modules, resolution)
+    phase_of, presets = module_settings(modules, resolution)
     chosen: dict[tuple[str, str], dict[str, tuple[object, str]]] = {}
+    preset: tuple[object, str] = ("", "")
     for relative in CONFIG_LAYERS:
         table = models_table(load_toml(project_root / relative), relative, resolution)
+        if "preset" in table:
+            preset = (table["preset"], relative)
         for level in ("skills", "phases"):
             entries = table.get(level, {})
             if not isinstance(entries, dict):
@@ -91,10 +94,18 @@ def resolve(project_root: Path, modules: tuple[Module, ...] = ()) -> Resolution:
                 found[key] = str(value)
         wanted[(level, name)] = found
 
-    for skill in {name for level, name in chosen if level == "skills"} | set(phase_of):
+    preset_values = active_preset(preset, presets, resolution)
+    for skill, values in preset_values.items():
+        if values is None:
+            broken.add(("preset", skill))
+        else:
+            wanted[("preset", skill)] = values
+
+    for skill in {name for level, name in chosen if level == "skills"} | set(phase_of) | set(preset_values):
         levels = [("skills", skill)]
         if skill in phase_of:
             levels.append(("phases", phase_of[skill]))
+        levels.append(("preset", skill))
         if any(level in broken for level in levels):
             resolution.invalid.add(skill)
             continue
@@ -109,9 +120,32 @@ def resolve(project_root: Path, modules: tuple[Module, ...] = ()) -> Resolution:
     return resolution
 
 
-def module_phases(modules: tuple[Module, ...], resolution: Resolution) -> dict[str, str]:
-    """The phase each skill belongs to, from the `[phases]` of the module listing it."""
+def active_preset(
+    preset: tuple[object, str], presets: dict[str, dict[str, dict[str, str] | None]], resolution: Resolution
+) -> dict[str, dict[str, str] | None]:
+    """The skills of the preset `[models] preset` names; a name no module ships leaves every preset skill alone."""
+    name, relative = preset
+    if name == "":
+        return {}
+    if not isinstance(name, str) or name not in presets:
+        shipped = ", ".join(sorted(presets)) or "none"
+        resolution.problems.append(
+            problem(relative, "models.preset", f"{name!r} is not a preset; installed: {shipped}")
+        )
+        return {skill: None for values in presets.values() for skill in values}
+    return presets[name]
+
+
+def module_settings(
+    modules: tuple[Module, ...], resolution: Resolution
+) -> tuple[dict[str, str], dict[str, dict[str, dict[str, str] | None]]]:
+    """Each skill's phase, and each preset's values per skill, from the `models.toml` of the module listing it.
+
+    A preset's value for a skill is None when it is unusable. Presets of the same name in several modules
+    are one preset.
+    """
     phase_of: dict[str, str] = {}
+    presets: dict[str, dict[str, dict[str, str] | None]] = {}
     for module in modules:
         shown = f"{module.folder.name}/{MODULE_FILE}"
         try:
@@ -122,7 +156,7 @@ def module_phases(modules: tuple[Module, ...], resolution: Resolution) -> dict[s
         phases = data.get("phases", {})
         if not isinstance(phases, dict):
             resolution.problems.append(problem(shown, "phases", "must be a table"))
-            continue
+            phases = {}
         for skill, phase in phases.items():
             if skill not in module.skills:
                 resolution.problems.append(problem(shown, f"phases.{skill}", "names a skill its module does not list"))
@@ -130,7 +164,61 @@ def module_phases(modules: tuple[Module, ...], resolution: Resolution) -> dict[s
                 resolution.problems.append(problem(shown, f"phases.{skill}", f"expected one of {', '.join(PHASES)}"))
             else:
                 phase_of[skill] = phase
-    return phase_of
+        for name, values in module_presets(data, module, shown, resolution).items():
+            presets.setdefault(name, {}).update(values)
+    return phase_of, presets
+
+
+def module_presets(
+    data: dict, module: Module, shown: str, resolution: Resolution
+) -> dict[str, dict[str, dict[str, str] | None]]:
+    """One module's presets with `extends` applied: a preset starts from the one it extends, then overrides by skill."""
+    raw = data.get("presets", {})
+    if not isinstance(raw, dict):
+        resolution.problems.append(problem(shown, "presets", "must be a table"))
+        return {}
+    expanded: dict[str, dict[str, dict[str, str] | None]] = {}
+
+    def expand(name: str, chain: tuple[str, ...]) -> dict[str, dict[str, str] | None]:
+        if name in expanded:
+            return expanded[name]
+        table = raw[name]
+        result: dict[str, dict[str, str] | None] = {}
+        if not isinstance(table, dict):
+            resolution.problems.append(problem(shown, f"presets.{name}", "must be a table"))
+            expanded[name] = result
+            return result
+        parent = table.get("extends")
+        if parent is not None:
+            if not isinstance(parent, str) or parent not in raw or parent in chain:
+                resolution.problems.append(
+                    problem(
+                        shown, f"presets.{name}.extends", "must name another preset of this module, without a cycle"
+                    )
+                )
+            else:
+                result.update(expand(parent, (*chain, parent)))
+        for skill, values in table.items():
+            if skill == "extends":
+                continue
+            key_path = f"presets.{name}.{skill}"
+            if skill not in module.skills:
+                resolution.problems.append(problem(shown, key_path, "names a skill its module does not list"))
+                continue
+            if not isinstance(values, dict):
+                resolution.problems.append(problem(shown, key_path, "must be a table"))
+                result[skill] = None
+                continue
+            messages = [(key, invalid_value(key, value)) for key, value in values.items()]
+            for key, message in messages:
+                if message is not None:
+                    resolution.problems.append(problem(shown, f"{key_path}.{key}", message))
+            usable = all(message is None for _, message in messages)
+            result[skill] = {key: str(values[key]) for key in KEYS if values.get(key)} if usable else None
+        expanded[name] = result
+        return result
+
+    return {name: expand(name, (name,)) for name in raw}
 
 
 def models_table(layer: dict, relative: str, resolution: Resolution) -> dict:

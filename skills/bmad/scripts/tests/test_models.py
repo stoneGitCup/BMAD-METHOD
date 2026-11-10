@@ -105,6 +105,57 @@ class PhaseTests(unittest.TestCase):
         )
 
 
+class PresetTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        write(self.root / "_bmad" / "config.toml", "[core]\n")
+        self.record = self.root / "skills" / "bmod-demo"
+        write(
+            self.record / "models.toml",
+            '[phases]\nplanner = "planning"\n'
+            '[presets.base]\nplanner = { model = "opus", effort = "high" }\nbuilder = { model = "sonnet" }\n'
+            '[presets.big]\nextends = "base"\nplanner = { model = "fable", effort = "high" }\n',
+        )
+        self.modules = (models.Module(self.record, ("planner", "builder")),)
+
+    def resolve(self, team: str) -> models.Resolution:
+        write(self.root / "_bmad" / "custom" / "config.toml", team)
+        return models.resolve(self.root, self.modules)
+
+    def test_no_preset_unless_one_is_named(self):
+        self.assertEqual(self.resolve("").skills, {})
+
+    def test_a_preset_and_its_extension(self):
+        base = self.resolve('[models]\npreset = "base"\n').skills
+        self.assertEqual(base, {"planner": {"model": "opus", "effort": "high"}, "builder": {"model": "sonnet"}})
+        big = self.resolve('[models]\npreset = "big"\n').skills
+        self.assertEqual(big, {"planner": {"model": "fable", "effort": "high"}, "builder": {"model": "sonnet"}})
+
+    def test_phase_and_skill_settings_beat_the_preset_per_key(self):
+        skills = self.resolve(
+            '[models]\npreset = "base"\n[models.phases.planning]\neffort = "low"\n'
+            '[models.skills.builder]\nmodel = "haiku"\n'
+        ).skills
+        self.assertEqual(skills, {"planner": {"model": "opus", "effort": "low"}, "builder": {"model": "haiku"}})
+
+    def test_the_personal_layer_can_turn_the_preset_off(self):
+        write(self.root / "_bmad" / "custom" / "config.user.toml", '[models]\npreset = ""\n')
+        self.assertEqual(self.resolve('[models]\npreset = "base"\n').skills, {})
+
+    def test_an_unknown_preset_is_a_problem_and_its_skills_are_left_alone(self):
+        resolution = self.resolve('[models]\npreset = "nope"\n')
+        self.assertEqual([item["key"] for item in resolution.problems], ["models.preset"])
+        self.assertEqual(resolution.skills, {})
+        self.assertEqual(resolution.invalid, {"planner", "builder"})
+
+    def test_an_extends_cycle_is_reported_once_where_it_closes(self):
+        write(self.record / "models.toml", '[presets.a]\nextends = "b"\n[presets.b]\nextends = "a"\n')
+        resolution = models.resolve(self.root, self.modules)
+        self.assertEqual([item["key"] for item in resolution.problems], ["presets.b.extends"])
+
+
 class ShippedModelsTests(unittest.TestCase):
     """The module records shipped in this repository phase only their own skills."""
 
@@ -120,6 +171,31 @@ class ShippedModelsTests(unittest.TestCase):
             root = Path(temp)
             write(root / "_bmad" / "config.toml", "[core]\n")
             self.assertEqual(models.resolve(root, modules).problems, [])
+
+    def test_the_roles_presets_match_the_initiative(self):
+        skills_root = Path(__file__).resolve().parents[3]
+        modules = tuple(
+            models.Module(path.parent, tuple(models.load_toml(path.parent / "bmod.toml")["bmod"]["skills"]))
+            for path in sorted(skills_root.glob("bmod-*/models.toml"))
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            write(root / "_bmad" / "config.toml", '[models]\npreset = "roles"\n')
+            roles = models.resolve(root, modules).skills
+            write(root / "_bmad" / "config.toml", '[models]\npreset = "roles-fable"\n')
+            fable = models.resolve(root, modules).skills
+        self.assertEqual(roles["bmad-architecture"], {"model": "opus", "effort": "xhigh"})
+        self.assertEqual(roles["bmad-build"], {"model": "sonnet", "effort": "medium"})
+        self.assertEqual(roles["bmad-shard-pro"], {"model": "haiku", "effort": "low"})
+        self.assertEqual(fable["bmad-architecture"], {"model": "fable", "effort": "high"})
+        self.assertEqual(fable["bmad-agent-architect"], {"model": "fable", "effort": "high"})
+        self.assertEqual(
+            {skill: fable[skill] for skill in roles if "architect" not in skill},
+            {skill: values for skill, values in roles.items() if "architect" not in skill},
+        )
+        self.assertFalse(
+            set(roles) & {"bmad-review", "bmad-facilitate", "bmad-advanced-elicitation", "bmad-party-mode"}
+        )
 
     def test_skills_started_mid_turn_are_in_no_phase(self):
         skills_root = Path(__file__).resolve().parents[3]

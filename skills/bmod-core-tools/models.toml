@@ -11,3 +11,18 @@ bmad = "utility"
 bmad-customize = "utility"
 bmad-ingest = "utility"
 bmad-shard-pro = "utility"
+
+# `[models] preset = "roles"`: see the method module's models.toml. The four skills above that run
+# mid-turn have no preset value either.
+
+[presets.roles]
+bmad-brainstorming = { model = "sonnet", effort = "medium" }
+bmad-deep-recon = { model = "opus", effort = "high" }
+bmad-forge-idea = { model = "opus", effort = "high" }
+bmad = { model = "sonnet", effort = "low" }
+bmad-customize = { model = "sonnet", effort = "low" }
+bmad-ingest = { model = "sonnet", effort = "low" }
+bmad-shard-pro = { model = "haiku", effort = "low" }
+
+[presets.roles-fable]
+extends = "roles"

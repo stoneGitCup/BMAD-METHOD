@@ -4,3 +4,12 @@
 [phases]
 bmad-toolsmith = "implementation"
 bmad-eval = "validation"
+
+# `[models] preset = "roles"`: see the method module's models.toml.
+
+[presets.roles]
+bmad-toolsmith = { model = "opus", effort = "high" }
+bmad-eval = { model = "sonnet", effort = "medium" }
+
+[presets.roles-fable]
+extends = "roles"
