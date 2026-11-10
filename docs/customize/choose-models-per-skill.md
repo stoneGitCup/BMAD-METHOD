@@ -76,7 +76,7 @@ For each key, a skill's own setting wins over its phase default, and a phase def
 
 ### 3. Run setup
 
-Ask the `bmad` skill to run `bmad setup`. It writes `model` and `effort` into each installed skill and lists them under `applied`. Setup records what it wrote, and the value each skill shipped with, in `_bmad/models-applied.json`. When you remove a setting, the next setup puts the shipped value back. If you edit `model` or `effort` in an installed `SKILL.md` by hand, setup leaves your edit alone and lists it under `not_applied`; delete the line and run setup again to hand the key back.
+Ask the `bmad` skill to run `bmad setup`. It writes `model` and `effort` into each installed skill and lists them under `applied`. Setup records what it wrote, and the value each skill shipped with, in `_bmad/state/models-applied.json`, which Git ignores because it describes your machine's installed skills. When you remove a setting, the next setup puts the shipped value back. If you edit `model` or `effort` in an installed `SKILL.md` by hand, setup leaves your edit alone and lists it under `not_applied`; delete the line and run setup again to hand the key back.
 
 After `npx skills update`, `bmad status` lists any skill whose settings were overwritten. Run `bmad setup` again to restore them.
 

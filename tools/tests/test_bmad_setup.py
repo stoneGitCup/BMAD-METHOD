@@ -4162,7 +4162,7 @@ class BmadModelSettingsTests(unittest.TestCase):
         team.unlink()
         self.setup()
         self.assertEqual(self.skill_md.read_text(encoding="utf-8"), shipped)
-        self.assertFalse((self.project / "_bmad" / "models-applied.json").exists())
+        self.assertFalse((self.project / "_bmad" / "state" / "models-applied.json").exists())
 
     def test_a_hand_edit_is_reported_and_left_alone(self):
         self.setup()
@@ -4230,15 +4230,17 @@ class BmadModelSettingsTests(unittest.TestCase):
     def test_an_unusable_record_is_a_problem_and_nothing_is_written(self):
         self.setup()
         write(self.project / "_bmad" / "custom" / "config.toml", '[models.skills.alpha-skill]\nmodel = "opus"\n')
-        write(self.project / "_bmad" / "models-applied.json", "{broken")
+        write(self.project / "_bmad" / "state" / "models-applied.json", "{broken")
         report = self.setup()
-        self.assertEqual([item["file"] for item in report["problems"]], ["_bmad/models-applied.json"])
+        self.assertEqual([item["file"] for item in report["problems"]], ["_bmad/state/models-applied.json"])
         self.assertEqual(self.skill_md.read_text(encoding="utf-8"), self.SKILL_TEXT)
-        self.assertEqual((self.project / "_bmad" / "models-applied.json").read_text(encoding="utf-8"), "{broken")
+        self.assertEqual(
+            (self.project / "_bmad" / "state" / "models-applied.json").read_text(encoding="utf-8"), "{broken"
+        )
 
     def test_the_record_forgets_skills_no_longer_installed(self):
         self.setup()
-        record = self.project / "_bmad" / "models-applied.json"
+        record = self.project / "_bmad" / "state" / "models-applied.json"
         write(record, '{"gone-skill": {"model": {"wrote": "opus", "shipped": null}}}')
         self.setup()
         self.assertFalse(record.exists())
@@ -4256,6 +4258,19 @@ class BmadModelSettingsTests(unittest.TestCase):
             report["models"]["not_applied"], [{"skill": "alpha-skill", "reason": "global", "model": "opus"}]
         )
         self.assertEqual(outside.read_text(encoding="utf-8"), self.SKILL_TEXT)
+
+    def test_the_record_is_ignored_by_git(self):
+        self.setup()
+        write(self.project / "_bmad" / "custom" / "config.toml", '[models.skills.alpha-skill]\nmodel = "opus"\n')
+        self.setup()
+        state = self.project / "_bmad" / "state"
+        self.assertTrue((state / "models-applied.json").is_file())
+        self.assertEqual((state / ".gitignore").read_text(encoding="utf-8"), "*\n!.gitignore\n")
+        subprocess.run(["git", "init", "-q", str(self.project)], check=True)
+        ignored = subprocess.run(
+            ["git", "-C", str(self.project), "check-ignore", "-q", "_bmad/state/models-applied.json"], check=False
+        )
+        self.assertEqual(ignored.returncode, 0)
 
 
 if __name__ == "__main__":

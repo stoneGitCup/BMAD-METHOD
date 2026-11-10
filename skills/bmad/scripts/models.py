@@ -6,7 +6,7 @@
 
 Claude Code reads `model` and `effort` from a skill's frontmatter. The skills CLI overwrites installed copies
 on every update, so `bmad setup` writes them back from `[models]` in the config layers. It records what it
-wrote in `_bmad/models-applied.json`, so it only ever replaces or removes its own values.
+wrote in `_bmad/state/models-applied.json`, a per-machine file Git ignores, so it only ever replaces or removes its own values.
 """
 
 from __future__ import annotations
@@ -29,7 +29,9 @@ FULL_MODEL_ID = re.compile(r"(?:[a-z0-9-]+\.)*claude-[a-z0-9](?:[a-z0-9.:@-]*[a-
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 TOP_LEVEL_KEY = re.compile(r"([A-Za-z0-9_-]+):")
 NEEDS_QUOTES = re.compile(r"[\[\]:#@]")
-RECORD = "_bmad/models-applied.json"
+RECORD = "_bmad/state/models-applied.json"
+# The record describes this machine's installed copies and mixes in personal settings, so it is never committed.
+STATE_GITIGNORE = "*\n!.gitignore\n"
 
 
 PHASES = ("analysis", "planning", "implementation", "validation", "utility")
@@ -392,6 +394,10 @@ def read_record(path: Path) -> dict[str, dict[str, dict[str, str | None]]] | Non
 
 def write_record(path: Path, record: dict[str, dict[str, dict[str, str | None]]]) -> None:
     if record:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        ignore = path.parent / ".gitignore"
+        if not ignore.exists():
+            ignore.write_text(STATE_GITIGNORE, encoding="utf-8")
         path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     elif path.exists():
         path.unlink()
