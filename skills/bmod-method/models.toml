@@ -1,0 +1,23 @@
+# The `method` module's model settings, read by `bmad setup` (see `[models]` in `_bmad/config.toml`).
+# `[phases]` puts each skill in the phase whose default it takes. A skill another skill starts mid-turn
+# stays out of every phase, so it keeps its caller's model.
+
+[phases]
+bmad-agent-analyst = "analysis"
+bmad-prfaq = "analysis"
+bmad-product-brief = "analysis"
+bmad-agent-pm = "planning"
+bmad-prd = "planning"
+bmad-agent-po = "planning"
+bmad-agent-ux-designer = "planning"
+bmad-ux = "planning"
+bmad-agent-architect = "planning"
+bmad-architecture = "planning"
+bmad-agent-dev = "implementation"
+bmad-build = "implementation"
+bmad-build-auto = "implementation"
+bmad-qa-generate-e2e-tests = "implementation"
+bmad-code-review = "validation"
+bmad-retrospective = "validation"
+bmad-walkthrough = "validation"
+bmad-project-context = "utility"

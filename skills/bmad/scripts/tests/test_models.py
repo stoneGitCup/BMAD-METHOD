@@ -60,6 +60,75 @@ class ResolveTests(unittest.TestCase):
             self.assertIsNotNone(models.invalid_value("model", value), value)
 
 
+class PhaseTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        write(self.root / "_bmad" / "config.toml", "[core]\n")
+        self.record = self.root / "skills" / "bmod-demo"
+        write(self.record / "models.toml", '[phases]\nplanner = "planning"\nbuilder = "implementation"\n')
+        self.modules = (models.Module(self.record, ("planner", "builder", "helper")),)
+
+    def resolve(self, team: str) -> models.Resolution:
+        write(self.root / "_bmad" / "custom" / "config.toml", team)
+        return models.resolve(self.root, self.modules)
+
+    def test_a_phase_default_reaches_only_the_skills_of_that_phase(self):
+        resolution = self.resolve('[models.phases.planning]\nmodel = "opus"\neffort = "high"\n')
+        self.assertEqual(resolution.skills, {"planner": {"model": "opus", "effort": "high"}})
+
+    def test_a_skill_setting_beats_the_phase_default_per_key(self):
+        resolution = self.resolve(
+            '[models.phases.planning]\nmodel = "opus"\neffort = "high"\n[models.skills.planner]\neffort = "low"\n'
+        )
+        self.assertEqual(resolution.skills["planner"], {"model": "opus", "effort": "low"})
+
+    def test_a_skill_in_no_phase_takes_no_phase_default(self):
+        resolution = self.resolve("".join(f'[models.phases.{phase}]\nmodel = "haiku"\n' for phase in models.PHASES))
+        self.assertNotIn("helper", resolution.skills)
+
+    def test_an_unknown_phase_and_a_bad_phase_value_are_problems(self):
+        resolution = self.resolve('[models.phases.design]\nmodel = "opus"\n[models.phases.planning]\neffort = "x"\n')
+        self.assertEqual(
+            [item["key"] for item in resolution.problems],
+            ["models.phases.design", "models.phases.planning.effort"],
+        )
+        self.assertEqual(resolution.invalid, {"planner"})
+
+    def test_a_module_cannot_phase_another_modules_skill(self):
+        write(self.record / "models.toml", '[phases]\nstranger = "planning"\nplanner = "testing"\n')
+        resolution = models.resolve(self.root, self.modules)
+        self.assertEqual(
+            [(item["file"], item["key"]) for item in resolution.problems],
+            [("bmod-demo/models.toml", "phases.stranger"), ("bmod-demo/models.toml", "phases.planner")],
+        )
+
+
+class ShippedModelsTests(unittest.TestCase):
+    """The module records shipped in this repository phase only their own skills."""
+
+    def test_every_shipped_models_toml_resolves_without_problems(self):
+        skills_root = Path(__file__).resolve().parents[3]
+        records = sorted(skills_root.glob("bmod-*/models.toml"))
+        self.assertTrue(records)
+        modules = tuple(
+            models.Module(path.parent, tuple(models.load_toml(path.parent / "bmod.toml")["bmod"]["skills"]))
+            for path in records
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            write(root / "_bmad" / "config.toml", "[core]\n")
+            self.assertEqual(models.resolve(root, modules).problems, [])
+
+    def test_skills_started_mid_turn_are_in_no_phase(self):
+        skills_root = Path(__file__).resolve().parents[3]
+        phased = set()
+        for path in skills_root.glob("bmod-*/models.toml"):
+            phased |= set(models.load_toml(path).get("phases", {}))
+        self.assertFalse(phased & {"bmad-review", "bmad-facilitate", "bmad-advanced-elicitation", "bmad-party-mode"})
+
+
 class RewriteTests(unittest.TestCase):
     def test_keys_go_after_the_description_and_nothing_else_changes(self):
         updated = models.rewrite(SKILL, {"model": "opus", "effort": "high"})

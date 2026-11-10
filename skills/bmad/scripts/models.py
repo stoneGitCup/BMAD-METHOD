@@ -14,10 +14,11 @@ from __future__ import annotations
 import re
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 sys.dont_write_bytecode = True
 
-from config_utils import load_toml  # noqa: E402
+from config_utils import ConfigError, load_toml  # noqa: E402
 
 KEYS = ("model", "effort")
 CONFIG_LAYERS = ("_bmad/config.toml", "_bmad/custom/config.toml", "_bmad/custom/config.user.toml")
@@ -29,6 +30,17 @@ TOP_LEVEL_KEY = re.compile(r"([A-Za-z0-9_-]+):")
 NEEDS_QUOTES = re.compile(r"[\[\]:#]")
 
 
+PHASES = ("analysis", "planning", "implementation", "validation", "utility")
+MODULE_FILE = "models.toml"
+
+
+class Module(NamedTuple):
+    """An installed module record: its folder, where its `models.toml` would sit, and the skills it lists."""
+
+    folder: Path
+    skills: tuple[str, ...]
+
+
 class Resolution:
     """Each skill's wanted keys, the skills left alone because a value is bad, and the problems found."""
 
@@ -38,36 +50,87 @@ class Resolution:
         self.problems: list[dict[str, object]] = []
 
 
-def resolve(project_root: Path) -> Resolution:
-    """The `[models.skills]` settings after the team and personal layers, each value from the last layer setting it."""
-    chosen: dict[str, dict[str, tuple[object, str]]] = {}
-    resolution = Resolution()
-    for relative in CONFIG_LAYERS:
-        layer = load_toml(project_root / relative)
-        skills = models_table(layer, relative, resolution).get("skills", {})
-        if not isinstance(skills, dict):
-            resolution.problems.append(problem(relative, "models.skills", "must be a table of skills"))
-            continue
-        for skill, values in skills.items():
-            if not isinstance(values, dict):
-                resolution.problems.append(problem(relative, f"models.skills.{skill}", "must be a table"))
-                resolution.invalid.add(skill)
-                continue
-            for key, value in values.items():
-                chosen.setdefault(skill, {})[key] = (value, relative)
+def resolve(project_root: Path, modules: tuple[Module, ...] = ()) -> Resolution:
+    """Each skill's model and effort: its own setting, else its phase's default, per key.
 
-    for skill, values in chosen.items():
-        wanted: dict[str, str] = {}
+    Each setting is taken after the team and personal layers, from the last layer that sets it. A skill's
+    phase comes from the `models.toml` of the module listing it.
+    """
+    resolution = Resolution()
+    phase_of = module_phases(modules, resolution)
+    chosen: dict[tuple[str, str], dict[str, tuple[object, str]]] = {}
+    for relative in CONFIG_LAYERS:
+        table = models_table(load_toml(project_root / relative), relative, resolution)
+        for level in ("skills", "phases"):
+            entries = table.get(level, {})
+            if not isinstance(entries, dict):
+                resolution.problems.append(problem(relative, f"models.{level}", "must be a table"))
+                continue
+            for name, values in entries.items():
+                key_path = f"models.{level}.{name}"
+                if level == "phases" and name not in PHASES:
+                    resolution.problems.append(problem(relative, key_path, f"expected one of {', '.join(PHASES)}"))
+                elif not isinstance(values, dict):
+                    resolution.problems.append(problem(relative, key_path, "must be a table"))
+                    chosen.setdefault((level, name), {})["table"] = (None, relative)
+                else:
+                    for key, value in values.items():
+                        chosen.setdefault((level, name), {})[key] = (value, relative)
+
+    wanted: dict[tuple[str, str], dict[str, str]] = {}
+    broken: set[tuple[str, str]] = set()
+    for (level, name), values in chosen.items():
+        found: dict[str, str] = {}
         for key, (value, relative) in values.items():
-            message = invalid_value(key, value)
-            if message is not None:
-                resolution.problems.append(problem(relative, f"models.skills.{skill}.{key}", message))
-                resolution.invalid.add(skill)
+            message = None if key == "table" else invalid_value(key, value)
+            if key == "table" or message is not None:
+                if message is not None:
+                    resolution.problems.append(problem(relative, f"models.{level}.{name}.{key}", message))
+                broken.add((level, name))
             elif value:
-                wanted[key] = str(value)
-        if skill not in resolution.invalid and wanted:
-            resolution.skills[skill] = {key: wanted[key] for key in KEYS if key in wanted}
+                found[key] = str(value)
+        wanted[(level, name)] = found
+
+    for skill in {name for level, name in chosen if level == "skills"} | set(phase_of):
+        levels = [("skills", skill)]
+        if skill in phase_of:
+            levels.append(("phases", phase_of[skill]))
+        if any(level in broken for level in levels):
+            resolution.invalid.add(skill)
+            continue
+        merged: dict[str, str] = {}
+        for key in KEYS:
+            for level in levels:
+                if key in wanted.get(level, {}):
+                    merged[key] = wanted[level][key]
+                    break
+        if merged:
+            resolution.skills[skill] = merged
     return resolution
+
+
+def module_phases(modules: tuple[Module, ...], resolution: Resolution) -> dict[str, str]:
+    """The phase each skill belongs to, from the `[phases]` of the module listing it."""
+    phase_of: dict[str, str] = {}
+    for module in modules:
+        shown = f"{module.folder.name}/{MODULE_FILE}"
+        try:
+            data = load_toml(module.folder / MODULE_FILE)
+        except ConfigError as error:
+            resolution.problems.append(problem(shown, "", str(error)))
+            continue
+        phases = data.get("phases", {})
+        if not isinstance(phases, dict):
+            resolution.problems.append(problem(shown, "phases", "must be a table"))
+            continue
+        for skill, phase in phases.items():
+            if skill not in module.skills:
+                resolution.problems.append(problem(shown, f"phases.{skill}", "names a skill its module does not list"))
+            elif phase not in PHASES:
+                resolution.problems.append(problem(shown, f"phases.{skill}", f"expected one of {', '.join(PHASES)}"))
+            else:
+                phase_of[skill] = phase
+    return phase_of
 
 
 def models_table(layer: dict, relative: str, resolution: Resolution) -> dict:

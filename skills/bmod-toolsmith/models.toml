@@ -1,0 +1,6 @@
+# The `toolsmith` module's model settings, read by `bmad setup` (see `[models]` in `_bmad/config.toml`).
+# `[phases]` puts each skill in the phase whose default it takes.
+
+[phases]
+bmad-toolsmith = "implementation"
+bmad-eval = "validation"

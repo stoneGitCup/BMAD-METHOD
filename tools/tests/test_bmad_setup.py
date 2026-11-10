@@ -4145,3 +4145,11 @@ class BmadModelSettingsTests(unittest.TestCase):
             report["models"]["not_applied"], [{"skill": "gamma-skill", "reason": "global", "model": "haiku"}]
         )
         self.assertEqual(gamma.joinpath("SKILL.md").read_bytes(), shipped)
+
+    def test_a_phase_default_from_the_modules_models_toml_is_written(self):
+        write(self.skills / "bmod-alpha" / "models.toml", '[phases]\nalpha-skill = "planning"\n')
+        self.setup()
+        write(self.project / "_bmad" / "custom" / "config.toml", '[models.phases.planning]\nmodel = "opus"\n')
+        report = self.setup()
+        self.assertEqual(report["models"]["applied"], [{"skill": "alpha-skill", "model": "opus"}])
+        self.assertIn("model: opus\n", self.skill_md.read_text(encoding="utf-8"))

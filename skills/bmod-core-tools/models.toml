@@ -1,0 +1,13 @@
+# The `core-tools` module's model settings, read by `bmad setup` (see `[models]` in `_bmad/config.toml`).
+# `[phases]` puts each skill in the phase whose default it takes. bmad-review, bmad-facilitate,
+# bmad-advanced-elicitation and bmad-party-mode are started mid-turn by other skills, so they stay out
+# of every phase and keep their caller's model.
+
+[phases]
+bmad-brainstorming = "analysis"
+bmad-deep-recon = "analysis"
+bmad-forge-idea = "analysis"
+bmad = "utility"
+bmad-customize = "utility"
+bmad-ingest = "utility"
+bmad-shard-pro = "utility"

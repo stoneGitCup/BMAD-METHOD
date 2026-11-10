@@ -399,7 +399,10 @@ def models_pass(
     """
     import models
 
-    resolution = models.resolve(project_root)
+    resolution = models.resolve(
+        project_root,
+        tuple(models.Module(installed.source, installed.parsed.skills or ()) for installed in installation.modules),
+    )
     applied: list[dict[str, str]] = []
     drift: list[dict[str, object]] = []
     not_applied: list[dict[str, str]] = []
