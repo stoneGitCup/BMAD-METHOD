@@ -1,0 +1,53 @@
+# The `method` module's model settings, read by `bmad setup`. Projects choose with `[models]` in
+# `_bmad/custom/config.toml` (team) or `_bmad/custom/config.user.toml` (personal).
+# `[phases]` puts each skill in the phase whose default it takes. A skill another skill starts mid-turn
+# stays out of every phase, so it keeps its caller's model.
+
+[phases]
+bmad-agent-analyst = "analysis"
+bmad-prfaq = "analysis"
+bmad-product-brief = "analysis"
+bmad-agent-pm = "planning"
+bmad-prd = "planning"
+bmad-agent-po = "planning"
+bmad-agent-ux-designer = "planning"
+bmad-ux = "planning"
+bmad-agent-architect = "planning"
+bmad-architecture = "planning"
+bmad-agent-dev = "implementation"
+bmad-build = "implementation"
+bmad-build-auto = "implementation"
+bmad-qa-generate-e2e-tests = "implementation"
+bmad-code-review = "validation"
+bmad-retrospective = "validation"
+bmad-walkthrough = "validation"
+bmad-project-context = "utility"
+
+# `[models] preset = "roles"` gives each role the model and effort its work needs: strong reasoning for
+# analysis, planning and review, a cheaper model for routine builds. `roles-fable` also puts architecture
+# on Claude Fable, which costs more and may need usage credits. Phase and skill settings still win.
+
+[presets.roles]
+bmad-agent-analyst = { model = "opus", effort = "high" }
+bmad-prfaq = { model = "opus", effort = "high" }
+bmad-product-brief = { model = "opus", effort = "high" }
+bmad-agent-pm = { model = "opus", effort = "high" }
+bmad-prd = { model = "opus", effort = "high" }
+bmad-agent-po = { model = "opus", effort = "medium" }
+bmad-agent-ux-designer = { model = "sonnet", effort = "high" }
+bmad-ux = { model = "sonnet", effort = "high" }
+bmad-agent-architect = { model = "opus", effort = "xhigh" }
+bmad-architecture = { model = "opus", effort = "xhigh" }
+bmad-agent-dev = { model = "sonnet", effort = "medium" }
+bmad-build = { model = "sonnet", effort = "medium" }
+bmad-build-auto = { model = "sonnet", effort = "medium" }
+bmad-qa-generate-e2e-tests = { model = "sonnet", effort = "medium" }
+bmad-code-review = { model = "opus", effort = "high" }
+bmad-retrospective = { model = "sonnet", effort = "high" }
+bmad-walkthrough = { model = "sonnet", effort = "medium" }
+bmad-project-context = { model = "sonnet", effort = "low" }
+
+[presets.roles-fable]
+extends = "roles"
+bmad-agent-architect = { model = "fable", effort = "high" }
+bmad-architecture = { model = "fable", effort = "high" }

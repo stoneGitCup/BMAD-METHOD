@@ -1,0 +1,29 @@
+# The `core-tools` module's model settings, read by `bmad setup`. Projects choose with `[models]` in
+# `_bmad/custom/config.toml` (team) or `_bmad/custom/config.user.toml` (personal).
+# `[phases]` puts each skill in the phase whose default it takes. bmad-review, bmad-facilitate,
+# bmad-advanced-elicitation and bmad-party-mode are started mid-turn by other skills, so they stay out
+# of every phase and keep their caller's model.
+
+[phases]
+bmad-brainstorming = "analysis"
+bmad-deep-recon = "analysis"
+bmad-forge-idea = "analysis"
+bmad = "utility"
+bmad-customize = "utility"
+bmad-ingest = "utility"
+bmad-shard-pro = "utility"
+
+# `[models] preset = "roles"`: see the method module's models.toml. The four skills above that run
+# mid-turn have no preset value either.
+
+[presets.roles]
+bmad-brainstorming = { model = "sonnet", effort = "medium" }
+bmad-deep-recon = { model = "opus", effort = "high" }
+bmad-forge-idea = { model = "opus", effort = "high" }
+bmad = { model = "sonnet", effort = "low" }
+bmad-customize = { model = "sonnet", effort = "low" }
+bmad-ingest = { model = "sonnet", effort = "low" }
+bmad-shard-pro = { model = "haiku", effort = "low" }
+
+[presets.roles-fable]
+extends = "roles"

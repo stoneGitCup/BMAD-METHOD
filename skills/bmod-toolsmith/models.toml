@@ -1,0 +1,16 @@
+# The `toolsmith` module's model settings, read by `bmad setup`. Projects choose with `[models]` in
+# `_bmad/custom/config.toml` (team) or `_bmad/custom/config.user.toml` (personal).
+# `[phases]` puts each skill in the phase whose default it takes.
+
+[phases]
+bmad-toolsmith = "implementation"
+bmad-eval = "validation"
+
+# `[models] preset = "roles"`: see the method module's models.toml.
+
+[presets.roles]
+bmad-toolsmith = { model = "opus", effort = "high" }
+bmad-eval = { model = "sonnet", effort = "medium" }
+
+[presets.roles-fable]
+extends = "roles"

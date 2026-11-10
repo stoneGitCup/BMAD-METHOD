@@ -10,7 +10,7 @@ Before running inference-based validation, run the deterministic validator:
 uv run --python 3.11 tools/validate_skills.py --json path/to/skill-dir
 ```
 
-This checks 12 rules deterministically: SKILL-01, SKILL-02, SKILL-03, SKILL-04, SKILL-05, SKILL-06, SKILL-07, SKILL-08, PATH-02, PATH-06, SEQ-02, TPL-01.
+This checks 13 rules deterministically: SKILL-01, SKILL-02, SKILL-03, SKILL-04, SKILL-05, SKILL-06, SKILL-07, SKILL-08, SKILL-09, PATH-02, PATH-06, SEQ-02, TPL-01.
 
 Review its JSON output. Skip any rule that produced zero findings — it is already verified. A rule that produced findings still gets reviewed (SKILL-06's what-and-when check benefits from judgment). The 10 rules that need judgment are PATH-01, PATH-03, PATH-04, PATH-05, STEP-04, STEP-05, SEQ-01, REF-01, REF-02, REF-03.
 
@@ -164,6 +164,14 @@ Every value reached during the render is part of the generation's identity. Cust
 - **Rule:** The frontmatter block must parse as a YAML mapping, and `name` and `description`, when present, must be strings. The skills CLI and the agents that load a skill parse it as YAML, and skip a skill whose frontmatter fails.
 - **Detection:** Parse the `---` delimited frontmatter block with a YAML parser and check that the result is a mapping whose `name` and `description` are strings. A file with no frontmatter block is left to SKILL-02 and SKILL-03.
 - **Fix:** Correct the YAML. A common cause is an apostrophe inside a single-quoted value; write it as `''`, or use double quotes.
+
+### SKILL-09 — SKILL.md Frontmatter Must Not Set `model` or `effort`
+
+- **Severity:** HIGH
+- **Applies to:** `SKILL.md`
+- **Rule:** A shipped skill's frontmatter carries neither `model` nor `effort`. A shipped value would pick the model for every project that installs the skill; BMad leaves that choice to the project's `[models]` config, which `bmad setup` writes into installed copies.
+- **Detection:** Read the frontmatter keys and flag `model` and `effort`.
+- **Fix:** Remove the key. A recommended value goes in a preset in the module's `models.toml`, which projects opt into.
 
 ---
 
