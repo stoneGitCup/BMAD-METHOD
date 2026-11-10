@@ -393,19 +393,26 @@ def models_pass(
 ) -> tuple[dict[str, object], list[dict[str, object]], bool]:
     """Compare each BMad skill's resolved model and effort with its installed SKILL.md, writing when asked.
 
-    Only project-scope copies of modules that are not plugin-managed are written; a setting aimed at any
-    other copy is reported as not applied. Every module is covered, whatever `--module` narrows, because
-    the settings name skills, not modules.
+    Only project-scope copies of modules that are not plugin-managed are written, judged by where a linked
+    folder really is; a setting aimed at any other copy, at a value someone edited by hand, or at a skill
+    with no frontmatter is reported as not applied. Every module is covered, whatever `--module` narrows,
+    because the settings name skills, not modules. Nothing is written or compared while a config layer
+    cannot be read.
     """
     import models
 
     resolution = models.resolve(
         project_root,
-        tuple(models.Module(installed.source, installed.parsed.skills or ()) for installed in installation.modules),
+        tuple(
+            models.Module(installed.source, (*installed.skills, *installed.absent_skills))
+            for installed in installation.modules
+        ),
     )
-    applied: list[dict[str, str]] = []
-    drift: list[dict[str, object]] = []
-    not_applied: list[dict[str, str]] = []
+    report: dict[str, list] = {"applied": [], "drift": [], "not_applied": []}
+    if resolution.unreadable:
+        return report, resolution.problems, False
+    record_path = project_root / models.RECORD
+    record = models.read_record(record_path)
     changed = False
     for installed in installation.modules:
         plugin = installed.parsed.update_source.startswith("plugin:")
@@ -414,21 +421,39 @@ def models_pass(
             if folder is None or name in resolution.invalid or not (folder / "SKILL.md").is_file():
                 continue
             wanted = resolution.skills.get(name, {})
-            if plugin or is_global(folder, project_root):
+            if plugin or is_global(folder.resolve(), project_root):
                 if wanted:
-                    not_applied.append({"skill": name, "reason": "plugin-managed" if plugin else "global", **wanted})
+                    reason = "plugin-managed" if plugin else "global"
+                    report["not_applied"].append({"skill": name, "reason": reason, **wanted})
                 continue
-            skill_md = folder / "SKILL.md"
+            target = (folder / "SKILL.md").resolve()
+            text = target.read_bytes().decode("utf-8")
+            if models.frontmatter_bounds(text.splitlines(keepends=True)) is None:
+                if wanted:
+                    report["not_applied"].append({"skill": name, "reason": "no-frontmatter", **wanted})
+                continue
+            found = models.current(text)
+            changes, after, edited = models.reconcile(found, wanted, record.get(name, {}))
+            if edited:
+                kept = {key: wanted[key] for key in edited}
+                report["not_applied"].append({"skill": name, "reason": "edited", **kept})
             if write:
-                changed = models.apply(skill_md, wanted) or changed
-            else:
-                found = models.current(skill_md.read_bytes().decode("utf-8"))
-                if found != wanted:
-                    drift.append({"skill": name, "wanted": wanted, "found": found})
-                    continue
-            if wanted:
-                applied.append({"skill": name, **wanted})
-    report = {"applied": applied, "drift": drift, "not_applied": not_applied}
+                updated = models.rewrite(text, changes)
+                if updated != text:
+                    target.write_bytes(updated.encode("utf-8"))
+                    changed = True
+                if after:
+                    record[name] = after
+                else:
+                    record.pop(name, None)
+            elif changes:
+                report["drift"].append({"skill": name, "wanted": wanted, "found": found})
+                continue
+            applied = {key: value for key, value in wanted.items() if key not in edited}
+            if applied:
+                report["applied"].append({"skill": name, **applied})
+    if write and record != models.read_record(record_path):
+        models.write_record(record_path, record)
     return report, resolution.problems, changed
 
 

@@ -1,4 +1,5 @@
-# The `method` module's model settings, read by `bmad setup` (see `[models]` in `_bmad/config.toml`).
+# The `method` module's model settings, read by `bmad setup`. Projects choose with `[models]` in
+# `_bmad/custom/config.toml` (team) or `_bmad/custom/config.user.toml` (personal).
 # `[phases]` puts each skill in the phase whose default it takes. A skill another skill starts mid-turn
 # stays out of every phase, so it keeps its caller's model.
 

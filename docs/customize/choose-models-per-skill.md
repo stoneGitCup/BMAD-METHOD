@@ -40,7 +40,19 @@ Switch on the shipped preset to give every role a suitable model:
 preset = "roles"
 ```
 
-`roles` runs analysis, planning and code review on Opus at high effort, architecture on Opus at `xhigh`, builds and tests on Sonnet at medium effort, and sharding on Haiku. `preset = "roles-fable"` is the same except that `bmad-agent-architect` and `bmad-architecture` run on Fable at high effort. Each module's `models.toml` lists the exact values.
+`roles` matches each role to its work:
+
+| Skills | Model and effort |
+| --- | --- |
+| Architecture (`bmad-agent-architect`, `bmad-architecture`) | Opus, `xhigh` |
+| Analyst, PM, PRD, PRFAQ, product brief, research, idea forging, code review, Toolsmith | Opus, `high` |
+| Product owner (`bmad-agent-po`) | Opus, `medium` |
+| UX designer and `bmad-ux`, retrospective | Sonnet, `high` |
+| Developer, builds, end-to-end tests, walkthrough, brainstorming, eval | Sonnet, `medium` |
+| `bmad`, customize, project context, ingest | Sonnet, `low` |
+| Sharding (`bmad-shard-pro`) | Haiku, `low` |
+
+`preset = "roles-fable"` is the same except that `bmad-agent-architect` and `bmad-architecture` run on Fable at `high`. The exact values are in each module's `models.toml`, in its record folder among your installed skills, such as `.agents/skills/bmod-method/models.toml`.
 
 Set a default for a whole phase. The phases are `analysis`, `planning`, `implementation`, `validation` and `utility`.
 
@@ -64,7 +76,7 @@ For each key, a skill's own setting wins over its phase default, and a phase def
 
 ### 3. Run setup
 
-Ask the `bmad` skill to run `bmad setup`. It writes `model` and `effort` into each installed skill and lists them under `applied`. A key you remove from the config is removed from the skill on the next setup.
+Ask the `bmad` skill to run `bmad setup`. It writes `model` and `effort` into each installed skill and lists them under `applied`. When you remove a setting, the next setup puts back whatever the skill shipped with. Setup keeps a record of what it wrote in `_bmad/models-applied.json`, so it never overwrites a value a skill ships with or one you edited by hand; it lists those under `not_applied` instead.
 
 After `npx skills update`, `bmad status` lists any skill whose settings were overwritten. Run `bmad setup` again to restore them.
 

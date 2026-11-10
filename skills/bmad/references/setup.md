@@ -26,7 +26,7 @@ Run with `--status`; it writes nothing. On a first install (`bmad_exists` false)
 - `custom_gitignore` `unprotected`: personal answers may be committed. Only the user edits that `.gitignore`.
 - `newer_copy_unused`: the duplicate in use is older than another copy.
 - `models.drift`: installed skills whose `model` or `effort` no longer match the `[models]` settings, usually after an update; setup writes them back.
-- `models.not_applied`: settings for a global or plugin-managed copy, which setup never writes.
+- `models.not_applied`: settings setup will not write, by `reason`: a `global` or `plugin-managed` copy, a value someone `edited` by hand in the installed `SKILL.md` (setup leaves it; the user restores or keeps it), or a skill with `no-frontmatter`.
 
 Then list what can be done and ask which to do, unless the request already said. End with `next` when it is not null.
 

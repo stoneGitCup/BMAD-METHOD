@@ -1,6 +1,6 @@
 ---
 title: Module Files
-description: 'The files that make a BMad module: bmod.toml, roster.toml, retired.toml, migration files, and help, with every key and rule.'
+description: 'The files that make a BMad module: bmod.toml, roster.toml, models.toml, retired.toml, migration files, and help, with every key and rule.'
 sidebar:
   order: 2
 ---
@@ -15,7 +15,7 @@ Use this page for the exact keys in a module's files. For what a module is and h
 | `bmod.toml` with `[skill]` | In each member's folder | The same file, with `[skill]` empty |
 | `help/help.md` | In the record folder | In the skill's folder |
 | `SKILL.md` | The record has one that only redirects to `bmad setup <code>` | The skill's own |
-| `roster.toml`, `retired.toml`, `migration-<n>.toml` | In the record folder | Beside `bmod.toml` |
+| `roster.toml`, `models.toml`, `retired.toml`, `migration-<n>.toml` | In the record folder | Beside `bmod.toml` |
 
 `bmad` finds a module by its `[bmod]` table. Validation requires a multi-skill record folder to be named `bmod-<code>`, and a single-skill module's folder keeps the skill's name.
 
@@ -152,6 +152,25 @@ scene = "A release readiness meeting."
 members = ["acme-agent-scout"]
 memory = false
 ```
+
+## `models.toml`
+
+Optional. It suggests a model and effort for each skill, which projects opt into with `[models]` in their config (see [Choose Models per Skill](../customize/choose-models-per-skill.md)). Leave `model` and `effort` out of each `SKILL.md`; validation reports them there.
+
+```toml
+[phases]
+acme-release-notes = "implementation"   # analysis | planning | implementation | validation | utility
+
+[presets.roles]
+acme-release-notes = { model = "sonnet", effort = "medium" }
+
+[presets.roles-fable]
+extends = "roles"
+```
+
+- `[phases]` puts a skill in the phase whose default (`[models.phases.<phase>]`) it takes.
+- `[presets.<name>]` gives a skill its value under `[models] preset = "<name>"`. Presets with the same name in several modules make one preset, so ship `roles` and `roles-fable` to join the shipped ones. `extends` starts from another preset of the same module.
+- A module names only skills its own `bmod.toml` lists. Leave out a skill that other skills start partway through a turn, so it keeps its caller's model.
 
 ## `retired.toml`
 

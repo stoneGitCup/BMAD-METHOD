@@ -5,12 +5,13 @@
 """The model and effort each installed skill runs on: resolved from the central config, written into SKILL.md.
 
 Claude Code reads `model` and `effort` from a skill's frontmatter. The skills CLI overwrites installed copies
-on every update, so `bmad setup` owns those two keys on installed BMad skills and writes them back from
-`[models]` in the config layers. Shipped skills never carry them, so a key setup has no value for is removed.
+on every update, so `bmad setup` writes them back from `[models]` in the config layers. It records what it
+wrote in `_bmad/models-applied.json`, so it only ever replaces or removes its own values.
 """
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -23,11 +24,12 @@ from config_utils import ConfigError, load_toml  # noqa: E402
 KEYS = ("model", "effort")
 CONFIG_LAYERS = ("_bmad/config.toml", "_bmad/custom/config.toml", "_bmad/custom/config.user.toml")
 MODEL_ALIASES = frozenset({"best", "fable", "opus", "sonnet", "haiku", "opus[1m]", "sonnet[1m]", "opusplan", "inherit"})
-# A full id, optionally behind a provider prefix such as `anthropic.` or `us.anthropic.`.
-FULL_MODEL_ID = re.compile(r"(?:[a-z0-9-]+\.)*claude-[a-z0-9.-]*[a-z0-9](?:\[1m\])?\Z")
+# A full id, optionally behind a provider prefix such as `us.anthropic.`, with a Bedrock `-v1:0` or Vertex `@date` tail.
+FULL_MODEL_ID = re.compile(r"(?:[a-z0-9-]+\.)*claude-[a-z0-9][a-z0-9.:@-]*(?:\[1m\])?\Z")
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 TOP_LEVEL_KEY = re.compile(r"([A-Za-z0-9_-]+):")
-NEEDS_QUOTES = re.compile(r"[\[\]:#]")
+NEEDS_QUOTES = re.compile(r"[\[\]:#@]")
+RECORD = "_bmad/models-applied.json"
 
 
 PHASES = ("analysis", "planning", "implementation", "validation", "utility")
@@ -48,6 +50,8 @@ class Resolution:
         self.skills: dict[str, dict[str, str]] = {}
         self.invalid: set[str] = set()
         self.problems: list[dict[str, object]] = []
+        # A config layer that cannot be read leaves every skill alone: what it would have set is unknown.
+        self.unreadable = False
 
 
 def resolve(project_root: Path, modules: tuple[Module, ...] = ()) -> Resolution:
@@ -60,8 +64,16 @@ def resolve(project_root: Path, modules: tuple[Module, ...] = ()) -> Resolution:
     phase_of, presets = module_settings(modules, resolution)
     chosen: dict[tuple[str, str], dict[str, tuple[object, str]]] = {}
     preset: tuple[object, str] = ("", "")
+    # The layer that last gave an entry something other than a table; a later table clears it.
+    not_tables: dict[tuple[str, str], str] = {}
     for relative in CONFIG_LAYERS:
-        table = models_table(load_toml(project_root / relative), relative, resolution)
+        try:
+            layer = load_toml(project_root / relative)
+        except ConfigError as error:
+            resolution.problems.append(problem(relative, "", str(error)))
+            resolution.unreadable = True
+            continue
+        table = models_table(layer, relative, resolution)
         if "preset" in table:
             preset = (table["preset"], relative)
         for level in ("skills", "phases"):
@@ -74,21 +86,22 @@ def resolve(project_root: Path, modules: tuple[Module, ...] = ()) -> Resolution:
                 if level == "phases" and name not in PHASES:
                     resolution.problems.append(problem(relative, key_path, f"expected one of {', '.join(PHASES)}"))
                 elif not isinstance(values, dict):
-                    resolution.problems.append(problem(relative, key_path, "must be a table"))
-                    chosen.setdefault((level, name), {})["table"] = (None, relative)
+                    not_tables[(level, name)] = relative
                 else:
+                    not_tables.pop((level, name), None)
                     for key, value in values.items():
                         chosen.setdefault((level, name), {})[key] = (value, relative)
 
     wanted: dict[tuple[str, str], dict[str, str]] = {}
-    broken: set[tuple[str, str]] = set()
+    broken: set[tuple[str, str]] = set(not_tables)
+    for (level, name), relative in not_tables.items():
+        resolution.problems.append(problem(relative, f"models.{level}.{name}", "must be a table"))
     for (level, name), values in chosen.items():
         found: dict[str, str] = {}
         for key, (value, relative) in values.items():
-            message = None if key == "table" else invalid_value(key, value)
-            if key == "table" or message is not None:
-                if message is not None:
-                    resolution.problems.append(problem(relative, f"models.{level}.{name}.{key}", message))
+            message = invalid_value(key, value)
+            if message is not None:
+                resolution.problems.append(problem(relative, f"models.{level}.{name}.{key}", message))
                 broken.add((level, name))
             elif value:
                 found[key] = str(value)
@@ -101,7 +114,8 @@ def resolve(project_root: Path, modules: tuple[Module, ...] = ()) -> Resolution:
         else:
             wanted[("preset", skill)] = values
 
-    for skill in {name for level, name in chosen if level == "skills"} | set(phase_of) | set(preset_values):
+    named = {name for level, name in (*chosen, *not_tables) if level == "skills"}
+    for skill in named | set(phase_of) | set(preset_values):
         levels = [("skills", skill)]
         if skill in phase_of:
             levels.append(("phases", phase_of[skill]))
@@ -248,56 +262,98 @@ def problem(relative: str, key: str, message: str) -> dict[str, object]:
     return {"kind": "models", "file": relative, "key": key, "message": f"{relative}: {key}: {message}"}
 
 
-def frontmatter_bounds(lines: list[str]) -> int | None:
-    """The index of the closing `---`, or None when the text does not open with a frontmatter block."""
-    if not lines or lines[0].rstrip("\r\n") != "---":
+def frontmatter_bounds(lines: list[str]) -> tuple[int, int] | None:
+    """The indexes of the opening and closing `---`, or None when the text does not open with a frontmatter block.
+
+    A byte-order mark and blank lines may come first, as YAML loaders allow.
+    """
+    start = 0
+    while start < len(lines) and not lines[start].lstrip("\ufeff").strip():
+        start += 1
+    if start == len(lines) or lines[start].lstrip("\ufeff").rstrip("\r\n") != "---":
         return None
-    for index in range(1, len(lines)):
+    for index in range(start + 1, len(lines)):
         if lines[index].rstrip("\r\n") == "---":
-            return index
+            return start, index
     return None
 
 
 def current(text: str) -> dict[str, str]:
     """The `model` and `effort` values a SKILL.md carries now."""
     lines = text.splitlines(keepends=True)
-    end = frontmatter_bounds(lines)
+    bounds = frontmatter_bounds(lines)
     found: dict[str, str] = {}
-    if end is None:
+    if bounds is None:
         return found
-    for line in lines[1:end]:
+    for line in lines[bounds[0] + 1 : bounds[1]]:
         match = TOP_LEVEL_KEY.match(line)
         if match and match.group(1) in KEYS:
             found[match.group(1)] = unquote(line[match.end() :].strip())
     return found
 
 
-def rewrite(text: str, wanted: dict[str, str]) -> str:
-    """The text with exactly the wanted `model` and `effort` lines; every other byte unchanged."""
+def reconcile(
+    found: dict[str, str], wanted: dict[str, str], record: dict[str, dict[str, str | None]]
+) -> tuple[dict[str, str | None], dict[str, dict[str, str | None]], list[str]]:
+    """What to change in one skill, from its frontmatter now, its settings, and setup's record for it.
+
+    The record keeps, per key, the value setup wrote and the value the skill shipped with (None for none). Setup
+    writes over a value only when it is the shipped one or its own, and on removal restores the shipped one, so
+    a skill's own `model` or `effort` survives and a hand edit is left alone. Returns the changes (None deletes
+    a line), the record afterwards, and the keys left alone because someone edited them.
+    """
+    changes: dict[str, str | None] = {}
+    after: dict[str, dict[str, str | None]] = {}
+    edited: list[str] = []
+    for key in KEYS:
+        now, want, entry = found.get(key), wanted.get(key), record.get(key)
+        shipped = entry["shipped"] if entry else now
+        ours = entry["wrote"] if entry else now
+        if want is not None:
+            if now != want and now not in (shipped, ours):
+                edited.append(key)
+                if entry:
+                    after[key] = entry
+                continue
+            if now != want:
+                changes[key] = want
+            after[key] = {"wrote": want, "shipped": shipped}
+        elif entry and now == ours and now != shipped:
+            changes[key] = shipped
+    return changes, after, edited
+
+
+def rewrite(text: str, changes: dict[str, str | None]) -> str:
+    """The text with each changed key set in place, added after `description`, or deleted; other bytes unchanged."""
     lines = text.splitlines(keepends=True)
-    end = frontmatter_bounds(lines)
-    if end is None:
+    bounds = frontmatter_bounds(lines)
+    if bounds is None or not changes:
         return text
-    inner = [line for line in lines[1:end] if not owned(line)]
-    if len(inner) == end - 1 and not wanted:
-        return text
-    newline = "\r\n" if lines[0].endswith("\r\n") else "\n"
-    insert_at = len(inner)
-    for index, line in enumerate(inner):
+    start, end = bounds
+    inner = lines[start + 1 : end]
+    newline = "\r\n" if lines[start].endswith("\r\n") else "\n"
+    pending = dict(changes)
+    kept: list[str] = []
+    for line in inner:
+        match = TOP_LEVEL_KEY.match(line)
+        key = match.group(1) if match else None
+        if key in pending:
+            value = pending.pop(key)
+            if value is not None:
+                kept.append(f"{key}: {quote(value)}{newline}")
+            continue
+        kept.append(line)
+    added = [f"{key}: {quote(value)}{newline}" for key, value in pending.items() if value is not None]
+    insert_at = len(kept)
+    for index, line in enumerate(kept):
         if line.startswith("description:"):
             insert_at = index + 1
-            while insert_at < len(inner) and not TOP_LEVEL_KEY.match(inner[insert_at]):
+            while insert_at < len(kept) and not TOP_LEVEL_KEY.match(kept[insert_at]):
                 insert_at += 1
             break
-    if insert_at > 0 and not inner[insert_at - 1].endswith(("\n", "\r")):
-        inner[insert_at - 1] += newline
-    added = [f"{key}: {quote(wanted[key])}{newline}" for key in KEYS if key in wanted]
-    return "".join([lines[0], *inner[:insert_at], *added, *inner[insert_at:], *lines[end:]])
-
-
-def owned(line: str) -> bool:
-    match = TOP_LEVEL_KEY.match(line)
-    return bool(match) and match.group(1) in KEYS
+    if added and insert_at > 0 and not kept[insert_at - 1].endswith(("\n", "\r")):
+        kept[insert_at - 1] += newline
+    return "".join([*lines[: start + 1], *kept[:insert_at], *added, *kept[insert_at:], *lines[end:]])
 
 
 def quote(value: str) -> str:
@@ -311,12 +367,17 @@ def unquote(value: str) -> str:
     return value
 
 
-def apply(skill_md: Path, wanted: dict[str, str]) -> bool:
-    """Write the wanted keys into the file a SKILL.md path points at; True when it changed."""
-    target = skill_md.resolve()
-    text = target.read_bytes().decode("utf-8")
-    updated = rewrite(text, wanted)
-    if updated == text:
-        return False
-    target.write_bytes(updated.encode("utf-8"))
-    return True
+def read_record(path: Path) -> dict[str, dict[str, dict[str, str | None]]]:
+    """Setup's record of what it wrote, per skill and key; empty when absent or unreadable."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def write_record(path: Path, record: dict[str, dict[str, dict[str, str | None]]]) -> None:
+    if record:
+        path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    elif path.exists():
+        path.unlink()

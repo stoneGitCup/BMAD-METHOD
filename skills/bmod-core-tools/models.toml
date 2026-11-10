@@ -1,4 +1,5 @@
-# The `core-tools` module's model settings, read by `bmad setup` (see `[models]` in `_bmad/config.toml`).
+# The `core-tools` module's model settings, read by `bmad setup`. Projects choose with `[models]` in
+# `_bmad/custom/config.toml` (team) or `_bmad/custom/config.user.toml` (personal).
 # `[phases]` puts each skill in the phase whose default it takes. bmad-review, bmad-facilitate,
 # bmad-advanced-elicitation and bmad-party-mode are started mid-turn by other skills, so they stay out
 # of every phase and keep their caller's model.

@@ -3998,10 +3998,6 @@ class BmadKnowledgeEntryTests(unittest.TestCase):
             self.assertIn("repeats", str(caught.exception))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class BmadModelSettingsTests(unittest.TestCase):
     """`[models.skills]` in the config layers lands in the installed SKILL.md of project-scope skills."""
 
@@ -4153,3 +4149,84 @@ class BmadModelSettingsTests(unittest.TestCase):
         report = self.setup()
         self.assertEqual(report["models"]["applied"], [{"skill": "alpha-skill", "model": "opus"}])
         self.assertIn("model: opus\n", self.skill_md.read_text(encoding="utf-8"))
+
+    def test_a_skills_own_model_survives_setup_and_comes_back_after_removal(self):
+        shipped = "---\nname: alpha-skill\ndescription: Alpha.\nmodel: haiku\n---\n\n# Alpha\n"
+        write(self.skill_md, shipped)
+        self.setup()
+        self.assertEqual(self.skill_md.read_text(encoding="utf-8"), shipped)
+        team = self.project / "_bmad" / "custom" / "config.toml"
+        write(team, '[models.skills.alpha-skill]\nmodel = "opus"\n')
+        self.setup()
+        self.assertEqual(self.skill_md.read_text(encoding="utf-8"), shipped.replace("haiku", "opus"))
+        team.unlink()
+        self.setup()
+        self.assertEqual(self.skill_md.read_text(encoding="utf-8"), shipped)
+        self.assertFalse((self.project / "_bmad" / "models-applied.json").exists())
+
+    def test_a_hand_edit_is_reported_and_left_alone(self):
+        self.setup()
+        write(self.project / "_bmad" / "custom" / "config.toml", '[models.skills.alpha-skill]\nmodel = "opus"\n')
+        self.setup()
+        edited = self.skill_md.read_text(encoding="utf-8").replace("model: opus", "model: sonnet")
+        write(self.skill_md, edited)
+        report = self.setup()
+        self.assertEqual(
+            report["models"]["not_applied"], [{"skill": "alpha-skill", "reason": "edited", "model": "opus"}]
+        )
+        self.assertEqual(self.skill_md.read_text(encoding="utf-8"), edited)
+        status = status_report(self, self.project, self.skill, "--root", str(self.skills))
+        self.assertEqual(status["models"]["drift"], [])
+        self.assertTrue(status["current"])
+
+    def test_a_skill_without_frontmatter_is_reported_not_applied(self):
+        write(self.skill_md, "# Alpha\n")
+        self.setup()
+        write(self.project / "_bmad" / "custom" / "config.toml", '[models.skills.alpha-skill]\nmodel = "opus"\n')
+        report = self.setup()
+        self.assertEqual(
+            report["models"]["not_applied"], [{"skill": "alpha-skill", "reason": "no-frontmatter", "model": "opus"}]
+        )
+        status = status_report(self, self.project, self.skill, "--root", str(self.skills))
+        self.assertEqual(status["models"]["drift"], [])
+
+    def test_a_malformed_config_layer_is_a_problem_and_nothing_is_written(self):
+        self.setup()
+        write(self.project / "_bmad" / "custom" / "config.user.toml", '[models.skills.alpha-skill]\nmodel = "opus"\n')
+        write(self.project / "_bmad" / "custom" / "config.toml", "[models\n")
+        report = self.setup()
+        self.assertEqual([item["file"] for item in report["problems"]], ["_bmad/custom/config.toml"])
+        self.assertEqual(report["models"], {"applied": [], "drift": [], "not_applied": []})
+        self.assertEqual(self.skill_md.read_text(encoding="utf-8"), self.SKILL_TEXT)
+        status = status_report(self, self.project, self.skill, "--root", str(self.skills))
+        self.assertFalse(status["current"])
+
+    def test_a_narrowed_setup_still_applies_settings_of_other_modules(self):
+        write_module_skill(self.skills, "beta-skill", "beta")
+        self.setup()
+        write(self.project / "_bmad" / "custom" / "config.toml", '[models.skills.alpha-skill]\nmodel = "opus"\n')
+        report = setup_report(self, self.project, self.skill, "--root", str(self.skills), "--module", "beta")
+        self.assertEqual(report["models"]["applied"], [{"skill": "alpha-skill", "model": "opus"}])
+        self.assertIn("model: opus\n", self.skill_md.read_text(encoding="utf-8"))
+
+    @unittest.skipUnless(symlink_to_temp_dir_succeeds(), "symlinks unavailable")
+    def test_a_project_link_to_a_global_copy_is_reported_not_written(self):
+        global_skills = self.project.parent / "home" / ".agents" / "skills"
+        gamma = write_module_skill(global_skills, "gamma-skill", "gamma")
+        shipped = gamma.joinpath("SKILL.md").read_bytes()
+        linked = self.project / ".claude" / "skills"
+        linked.mkdir(parents=True)
+        for name in ("gamma-skill", "bmod-gamma"):
+            os.symlink(global_skills / name, linked / name, target_is_directory=True)
+        roots = ("--root", str(linked), "--root", str(self.skills))
+        setup_report(self, self.project, self.skill, *roots)
+        write(self.project / "_bmad" / "custom" / "config.toml", '[models.skills.gamma-skill]\nmodel = "opus"\n')
+        report = setup_report(self, self.project, self.skill, *roots)
+        self.assertEqual(
+            report["models"]["not_applied"], [{"skill": "gamma-skill", "reason": "global", "model": "opus"}]
+        )
+        self.assertEqual(gamma.joinpath("SKILL.md").read_bytes(), shipped)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -17,7 +17,7 @@ What it checks:
 - SKILL-06: description quality (length, "Use when"/"Use if"; the fixed text for a module record)
 - SKILL-07: SKILL.md has body content after frontmatter
 - SKILL-08: SKILL.md frontmatter parses as a YAML mapping with string name and description
-- SKILL-09: SKILL.md frontmatter carries no model or effort; `bmad setup` owns them on installed copies
+- SKILL-09: SKILL.md frontmatter carries no model or effort; a BMad skill's model comes from the project's [models] config
 - PATH-02: no installed_path variable
 - PATH-06: script calls use {skill-root}, not a bare scripts/ path
 - SEQ-02: no time estimates
@@ -115,7 +115,7 @@ def _finding(
 
 # --- Frontmatter Parsing ---
 
-# Installed copies get these from `bmad setup`, which removes any it has no setting for.
+# A BMad skill leaves its model to the project: `bmad setup` writes these from `[models]` on installed copies.
 MODEL_KEYS = frozenset({"model", "effort"})
 
 
@@ -371,8 +371,8 @@ def validate_skill(skill_dir: str) -> list[dict]:
                 "SKILL.md Frontmatter Must Not Set model or effort",
                 "HIGH",
                 "SKILL.md",
-                f"Frontmatter sets `{key}`; `bmad setup` writes it from the project's `[models]` config instead.",
-                f"Remove `{key}` from the frontmatter and document the recommended value in the module's models.toml.",
+                f"Frontmatter sets `{key}`, which overrides the session model for everyone; `bmad setup` writes it from the project's `[models]` config.",
+                f"Remove `{key}` and put the recommended value in a preset in the module's models.toml.",
             )
         )
 

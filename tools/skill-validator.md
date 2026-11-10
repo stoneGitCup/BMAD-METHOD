@@ -169,9 +169,9 @@ Every value reached during the render is part of the generation's identity. Cust
 
 - **Severity:** HIGH
 - **Applies to:** `SKILL.md`
-- **Rule:** A shipped skill's frontmatter carries neither `model` nor `effort`. `bmad setup` owns both keys on installed copies: it writes them from the project's `[models]` config and removes any it has no setting for, so a shipped value would be deleted on the first setup.
+- **Rule:** A shipped skill's frontmatter carries neither `model` nor `effort`. A shipped value would pick the model for every project that installs the skill; BMad leaves that choice to the project's `[models]` config, which `bmad setup` writes into installed copies.
 - **Detection:** Read the frontmatter keys and flag `model` and `effort`.
-- **Fix:** Remove the key. A recommended value for a BMad skill goes in its module's `models.toml`.
+- **Fix:** Remove the key. A recommended value goes in a preset in the module's `models.toml`, which projects opt into.
 
 ---
 
