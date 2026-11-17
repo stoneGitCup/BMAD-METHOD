@@ -330,6 +330,19 @@ class TestRules(ProjectCase):
         self.assertEqual(code, 1)
         self.assertIn("SKILL-08", out)
 
+    def test_skill_09_model_and_effort_in_shipped_frontmatter_are_flagged(self):
+        skill = self.add_skill(
+            "bmad-pinned",
+            skill_md("bmad-pinned", "Does a thing. Use when testing.", extra_fm="model: opus\neffort: high\n"),
+        )
+        found = findings_by_rule(self.findings_for(skill), "SKILL-09")
+        self.assertEqual([finding["severity"] for finding in found], ["HIGH", "HIGH"])
+        self.assertEqual(["`effort`" in found[0]["detail"], "`model`" in found[1]["detail"]], [True, True])
+
+    def test_skill_09_frontmatter_without_them_passes(self):
+        skill = self.add_skill("bmad-plain", skill_md("bmad-plain", "Does a thing. Use when testing."))
+        self.assertEqual(findings_by_rule(self.findings_for(skill), "SKILL-09"), [])
+
     def test_skill_08_no_frontmatter_is_left_to_skill_02(self):
         skill = self.add_skill("bmad-bare", "# Body\n\nText.\n")
         rules = {finding["rule"] for finding in self.findings_for(skill)}

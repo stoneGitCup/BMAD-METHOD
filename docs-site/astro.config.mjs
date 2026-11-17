@@ -267,6 +267,10 @@ export default defineConfig({
               label: 'Write a Document Template',
               slug: 'customize/write-a-document-template',
             },
+            {
+              label: 'Choose Models per Skill',
+              slug: 'customize/choose-models-per-skill',
+            },
           ],
         },
         {
